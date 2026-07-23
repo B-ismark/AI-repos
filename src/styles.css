@@ -775,6 +775,47 @@ body {
   scrollbar-width: none;
 }
 .drawbar::-webkit-scrollbar { display: none; }
+/* Contextual selection toolbar (mobile) — pinned top-centre so it doesn't
+   cover the selected object, which stays directly draggable/resizable. */
+.selbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 24px);
+  padding: 4px 6px 4px 14px;
+  background: var(--surface-container-high);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-2);
+  z-index: 16;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.selbar::-webkit-scrollbar { display: none; }
+.selbar__title { color: var(--on-surface-variant); white-space: nowrap; flex: none; }
+.selbar__sep { width: 1px; height: 22px; background: var(--outline-variant); margin: 0 4px; flex: none; }
+.selbar__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--on-surface);
+  font: 500 0.875rem/1 var(--font-plain);
+  cursor: pointer;
+  flex: none;
+}
+.selbar__btn:active { background: color-mix(in srgb, var(--on-surface) 12%, transparent); }
+.selbar__btn--danger { color: var(--error); }
+
 .drawbar__tools { display: flex; gap: 2px; flex: none; }
 .drawbar__sep { width: 1px; height: 28px; background: var(--outline-variant); margin: 0 2px; flex: none; }
 .drawbar__width { display: flex; align-items: center; flex: none; }

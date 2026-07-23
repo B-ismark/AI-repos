@@ -16,6 +16,11 @@ interface Props {
   selected: boolean;
   /** Only interactive (clickable/editable) in the Select tool. */
   interactive: boolean;
+  /** Whether typing is allowed now (always on desktop; only in edit mode on
+   * mobile, so a select-tap doesn't pop the keyboard). */
+  editing: boolean;
+  /** Focus + place caret + scroll into view (e.g. mobile "Edit" pressed). */
+  autoFocus: boolean;
   /** Bumps on undo/redo so the editable text is re-seeded from state. */
   revision: number;
   onSelect: (id: string) => void;
@@ -36,6 +41,8 @@ function EditableFragmentImpl({
   modified,
   selected,
   interactive,
+  editing,
+  autoFocus,
   revision,
   onSelect,
   onChangeText,
@@ -49,6 +56,22 @@ function EditableFragmentImpl({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision]);
+
+  // Enter edit: focus, put the caret at the end, and scroll into view above
+  // the keyboard.
+  useEffect(() => {
+    if (!autoFocus || !ref.current) return;
+    const el = ref.current;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFocus, revision]);
 
   const [, , c, d, e, f] = fragment.transform;
   const show = modified || selected;
@@ -86,7 +109,7 @@ function EditableFragmentImpl({
       <div
         ref={ref}
         className="fragment"
-        contentEditable={interactive}
+        contentEditable={interactive && editing}
         suppressContentEditableWarning
         spellCheck={false}
         data-id={fragment.id}

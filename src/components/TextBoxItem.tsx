@@ -9,6 +9,8 @@ interface Props {
   pageHeight: number;
   selected: boolean;
   interactive: boolean;
+  /** Typing allowed now (always on desktop; edit mode only on mobile). */
+  editing: boolean;
   autoFocus: boolean;
   /** Bumps on undo/redo so the editable text is re-seeded from state. */
   revision: number;
@@ -27,6 +29,7 @@ function TextBoxItemImpl({
   pageHeight,
   selected,
   interactive,
+  editing,
   autoFocus,
   revision,
   onSelect,
@@ -49,6 +52,7 @@ function TextBoxItemImpl({
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
+      ref.current.scrollIntoView({ block: "center", inline: "nearest" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision]);
@@ -89,7 +93,7 @@ function TextBoxItemImpl({
       <div
         ref={ref}
         className="textbox"
-        contentEditable={interactive}
+        contentEditable={interactive && editing}
         suppressContentEditableWarning
         spellCheck={false}
         data-placeholder="Type…"

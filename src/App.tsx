@@ -3,15 +3,16 @@ import { PageView, type AnnotSpec } from "./components/PageView";
 import { translateAnnotation } from "./components/AnnotationLayer";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DrawToolbar } from "./components/DrawToolbar";
+import { SelectionBar } from "./components/SelectionBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { TooltipHost } from "./components/TooltipHost";
 import { Icon } from "./components/Icon";
 import type { PageNumberOptions, WatermarkOptions } from "./pdf/finishOps";
 import { useHistory } from "./hooks/useHistory";
+import { useMediaQuery } from "./hooks/useMediaQuery";
 import { usePersistentState } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
-import { useMediaQuery } from "./hooks/useMediaQuery";
 import { loadPdf } from "./pdf/loader";
 import { DEFAULT_STYLE, isFragmentModified, resolveFragmentStyle } from "./pdf/style";
 
@@ -141,6 +142,12 @@ export function App() {
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [selection, setSelection] = useState<Selection>(null);
+  // Mobile: the full properties sheet only opens on demand (via the selection
+  // bar), and text elements only become editable in an explicit edit mode —
+  // so a single tap selects without a sheet covering the object or the
+  // keyboard popping up. (`compact`/`sheetOpen` defined below, after isWide.)
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [status, setStatus] = useState<Status>("idle");
@@ -157,14 +164,14 @@ export function App() {
 
   const vp = useViewport();
   const theme = useTheme();
-  // >=600px gets the persistent side panel + tool rail (Material Medium+).
+  // >=600px gets the persistent side panel + tool rail (Material Medium+);
+  // <600px is the compact phone layout (contextual selection bar + on-demand
+  // sheet, `sheetOpen` state above).
   const isWide = useMediaQuery("(min-width: 600px)");
+  const compact = !isWide;
   // Stamps have no properties panel (edited directly on the canvas), so they
   // don't drive the sheet/side panel.
   const panelSelection = selection && selection.kind !== "stamp" ? selection : null;
-  // The mobile properties sheet covers the bottom of the screen; hide the
-  // floating zoom bar + FAB while it's open to declutter the thumb zone.
-  const sheetOpen = !isWide && !!panelSelection;
   const themeIcon =
     theme.mode === "light" ? "light_mode" : theme.mode === "dark" ? "dark_mode" : "system_mode";
   const themeLabel =
@@ -373,6 +380,7 @@ export function App() {
       doc.set((d) => ({ ...d, textBoxes: [...d.textBoxes, box] }));
       setTool("select");
       setSelection({ kind: "textbox", id });
+      setEditingId(id); // immediately editable (mobile edit mode)
       setAutoFocusId(id);
     },
     [doc, lastTextStyle],
@@ -401,6 +409,7 @@ export function App() {
       if (spec.kind === "note") {
         setTool("select");
         setSelection({ kind: "annotation", id });
+        setEditingId(id); // immediately editable (mobile edit mode)
         setAutoFocusId(id);
       }
     },
@@ -506,8 +515,27 @@ export function App() {
 
   const onSelect = useCallback((sel: Selection) => {
     setAutoFocusId(null);
+    setEditingId(null);
+    setSheetOpen(false);
     setSelection(sel);
   }, []);
+
+  /** Enter text-edit mode for the current selection (mobile): make it editable,
+   * focus it, and scroll it into view above the keyboard. */
+  const editSelection = useCallback(() => {
+    if (!selection) return;
+    setEditingId(selection.id);
+    setAutoFocusId(selection.id);
+    setRevision((r) => r + 1);
+  }, [selection]);
+
+  // Deselecting also exits edit mode and closes the on-demand sheet.
+  useEffect(() => {
+    if (!selection) {
+      setEditingId(null);
+      setSheetOpen(false);
+    }
+  }, [selection]);
 
   const selectedAnnotation =
     selection?.kind === "annotation"
@@ -971,7 +999,7 @@ export function App() {
       onChangeAnnotation={onChangeAnnotation}
       onDelete={onDelete}
       onReset={onResetStyle}
-      onClose={() => setSelection(null)}
+      onClose={() => (compact ? setSheetOpen(false) : setSelection(null))}
     />
   );
 
@@ -1073,6 +1101,8 @@ export function App() {
                 placing={!!pendingStamp}
                 selection={selection}
                 autoFocusId={autoFocusId}
+                editingId={editingId}
+                compact={compact}
                 revision={revision}
                 onSelect={onSelect}
                 onChangeFragmentText={onChangeFragmentText}
@@ -1116,21 +1146,36 @@ export function App() {
               setDrawStyle={setDrawStyle}
             />
           )}
+
+          {/* Mobile: contextual toolbar (instead of auto-opening the sheet) so
+              the selected object stays visible and directly manipulable. */}
+          {compact && selection && selection.kind !== "stamp" && !sheetOpen && (
+            <SelectionBar
+              key={`${selection.kind}-${selection.id}`}
+              selection={selection}
+              annotationKind={selectedAnnotation?.kind}
+              onEdit={editSelection}
+              onStyle={() => setSheetOpen(true)}
+              onDelete={onDelete}
+              onClose={() => setSelection(null)}
+            />
+          )}
         </div>
 
-        {/* Stamps (signatures/images) are manipulated directly on the canvas,
-            so they have no properties panel. On wide screens the panel is
-            persistent (empty state when nothing applicable is selected) so the
-            layout doesn't shift; on phones it's a bottom sheet shown only when
-            there's something to edit. */}
+        {/* Stamps are edited directly on the canvas (no panel). Wide screens
+            get a persistent side panel so the layout doesn't shift. On phones,
+            a single tap shows the contextual SelectionBar (above) — the full
+            properties sheet opens only on demand (its Style action), so it
+            never auto-covers the selected object. */}
         {isWide ? (
           <aside className="panel">{propertiesPanel}</aside>
         ) : (
+          sheetOpen &&
           panelSelection && (
             <>
-              {/* Mobile-only visual dim. Non-interactive (pointer-events:none)
-                  so the selected element's on-canvas handles stay reachable;
-                  dismiss via empty-canvas tap, the sheet Close button, or Esc. */}
+              {/* Visual dim only (pointer-events:none in CSS). Dismiss the
+                  on-demand sheet via its Close button, tapping the canvas
+                  through the dim, or Esc. */}
               <div className="scrim" aria-hidden="true" />
               <aside className="panel">{propertiesPanel}</aside>
             </>
