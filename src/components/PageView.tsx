@@ -18,7 +18,9 @@ import { TextBoxItem } from "./TextBoxItem";
 import { RedactionItem } from "./RedactionItem";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { NoteItem } from "./NoteItem";
+import { StampItem } from "./StampItem";
 import { dragState } from "../hooks/useDrag";
+import type { Stamp } from "../pdf/types";
 
 /** Annotation spec minus the fields the App assigns (id, pageIndex). */
 export type AnnotSpec = Omit<Annotation, "id" | "pageIndex">;
@@ -34,6 +36,8 @@ interface Props {
   textBoxes: TextBox[];
   redactions: Redaction[];
   annotations: Annotation[];
+  stamps: Stamp[];
+  placing: boolean;
   selection: Selection;
   autoFocusId: string | null;
   revision: number;
@@ -43,9 +47,11 @@ interface Props {
   onChangeTextBox: (id: string, patch: Partial<TextBox>, key: string) => void;
   onChangeRedaction: (id: string, patch: Partial<Redaction>, key: string) => void;
   onChangeNoteText: (id: string, text: string) => void;
+  onChangeStamp: (id: string, patch: Partial<Stamp>, key: string) => void;
   onAddTextBox: (pageIndex: number, x: number, y: number) => void;
   onAddRedaction: (pageIndex: number, x: number, y: number, width: number, height: number) => void;
   onAddAnnotation: (pageIndex: number, spec: AnnotSpec) => void;
+  onPlaceStamp: (pageIndex: number, xLeft: number, yTop: number) => void;
 }
 
 const MIN_DRAG = 6;
@@ -62,9 +68,10 @@ interface Gesture {
 export function PageView(props: Props) {
   const {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
-    annotations, selection, autoFocusId, revision, onSelect, onChangeFragmentText,
-    onChangeTextBoxText, onChangeTextBox, onChangeRedaction, onChangeNoteText,
-    onAddTextBox, onAddRedaction, onAddAnnotation,
+    annotations, stamps, placing, selection, autoFocusId, revision, onSelect,
+    onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction,
+    onChangeNoteText, onChangeStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
+    onPlaceStamp,
   } = props;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -100,6 +107,11 @@ export function PageView(props: Props) {
     if (ev.target !== overlayRef.current) return;
     const { x, y } = local(ev.clientX, ev.clientY);
 
+    if (placing) {
+      ev.preventDefault();
+      onPlaceStamp(page.pageIndex, x / scale, H - y / scale);
+      return;
+    }
     if (tool === "select") {
       onSelect(null);
       return;
@@ -159,7 +171,13 @@ export function PageView(props: Props) {
     }
   };
 
-  const cursor = tool === "text" ? "text" : tool === "redact" || tool === "draw" ? "crosshair" : "default";
+  const cursor = placing
+    ? "copy"
+    : tool === "text"
+      ? "text"
+      : tool === "redact" || tool === "draw"
+        ? "crosshair"
+        : "default";
   const nonNote = annotations.filter((a) => a.kind !== "note");
   const notes = annotations.filter((a) => a.kind === "note") as Extract<Annotation, { kind: "note" }>[];
 
@@ -259,6 +277,19 @@ export function PageView(props: Props) {
               interactive={tool === "select"}
               onSelect={(id) => onSelect({ kind: "redaction", id })}
               onChange={onChangeRedaction}
+            />
+          ))}
+
+          {stamps.map((s) => (
+            <StampItem
+              key={s.id}
+              stamp={s}
+              scale={scale}
+              pageHeight={H}
+              selected={selection?.kind === "stamp" && selection.id === s.id}
+              interactive={tool === "select"}
+              onSelect={(id) => onSelect({ kind: "stamp", id })}
+              onChange={onChangeStamp}
             />
           ))}
 

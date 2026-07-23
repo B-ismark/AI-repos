@@ -12,6 +12,7 @@ import type {
   Edits,
   LoadedPdf,
   Redaction,
+  Stamp,
   TextBox,
   TextFragment,
   TextStyle,
@@ -25,6 +26,24 @@ export interface ExportInput {
   textBoxes: TextBox[];
   redactions: Redaction[];
   annotations: Annotation[];
+  stamps: Stamp[];
+}
+
+/** Embed a data-URL image into the document (PNG or JPEG). */
+async function embedStamp(out: PDFDocument, dataUrl: string) {
+  return dataUrl.startsWith("data:image/png")
+    ? out.embedPng(dataUrl)
+    : out.embedJpg(dataUrl);
+}
+
+/** Load a data-URL image element (for the raster path). */
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
 }
 
 const NOTE_SIZE = 12;
@@ -177,7 +196,7 @@ export async function exportPdf(
   loaded: LoadedPdf,
   input: ExportInput,
 ): Promise<Uint8Array> {
-  const { edits, textBoxes, redactions, annotations } = input;
+  const { edits, textBoxes, redactions, annotations, stamps } = input;
   const src = await PDFDocument.load(loaded.bytes.slice(0));
   const out = await PDFDocument.create();
   const fontCache = new Map<string, PDFFont>();
@@ -198,9 +217,10 @@ export async function exportPdf(
     const pageBoxes = textBoxes.filter((t) => t.pageIndex === i);
     const pageRedactions = redactions.filter((r) => r.pageIndex === i);
     const pageAnnots = annotations.filter((a) => a.pageIndex === i);
+    const pageStamps = stamps.filter((s) => s.pageIndex === i);
 
     if (pageRedactions.length > 0) {
-      await rasterisePage(out, loaded, pageData.pageIndex, edits, pageBoxes, pageRedactions, pageAnnots);
+      await rasterisePage(out, loaded, pageData.pageIndex, edits, pageBoxes, pageRedactions, pageAnnots, pageStamps);
       continue;
     }
 
@@ -255,6 +275,11 @@ export async function exportPdf(
     }
 
     drawVectorAnnots(page, pageAnnots, helv);
+
+    for (const s of pageStamps) {
+      const img = await embedStamp(out, s.dataUrl);
+      page.drawImage(img, { x: s.x, y: s.y, width: s.width, height: s.height });
+    }
   }
 
   return out.save();
@@ -270,6 +295,7 @@ async function rasterisePage(
   boxes: TextBox[],
   redactions: Redaction[],
   annots: Annotation[],
+  stamps: Stamp[],
 ): Promise<void> {
   const pageData = loaded.pages[pageIndex];
   const H = pageData.viewBox.height;
@@ -314,6 +340,12 @@ async function rasterisePage(
 
   // Annotations sit above content but below redactions.
   drawRasterAnnots(ctx, annots, H, S);
+
+  // Stamps (signatures / images).
+  for (const s of stamps) {
+    const img = await loadImage(s.dataUrl);
+    ctx.drawImage(img, s.x * S, (H - (s.y + s.height)) * S, s.width * S, s.height * S);
+  }
 
   // Redactions painted solid — this is what actually removes the content,
   // since only the raster survives into the output page.

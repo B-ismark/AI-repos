@@ -3,6 +3,7 @@ import { PageView, type AnnotSpec } from "./components/PageView";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { Organize } from "./components/Organize";
 import { DrawToolbar } from "./components/DrawToolbar";
+import { SignatureDialog } from "./components/SignatureDialog";
 import { Icon } from "./components/Icon";
 import { useHistory } from "./hooks/useHistory";
 import { useViewport } from "./hooks/useViewport";
@@ -17,6 +18,7 @@ import type {
   LoadedPdf,
   Redaction,
   Selection,
+  Stamp,
   TextBox,
   TextFragment,
   TextStyle,
@@ -24,13 +26,15 @@ import type {
 } from "./pdf/types";
 
 type Status = "idle" | "loading" | "ready" | "exporting" | "error";
+type NavKey = Tool | "sign";
 
-const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [], annotations: [] };
+const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [], annotations: [], stamps: [] };
 
-const TOOLS: { key: Tool; label: string; icon: string }[] = [
+const TOOLS: { key: NavKey; label: string; icon: string }[] = [
   { key: "select", label: "Select", icon: "arrow_selector_tool" },
   { key: "text", label: "Add text", icon: "text_fields" },
   { key: "draw", label: "Draw", icon: "draw" },
+  { key: "sign", label: "Sign", icon: "signature" },
   { key: "redact", label: "Redact", icon: "select" },
 ];
 
@@ -39,9 +43,12 @@ export function App() {
   const [fileName, setFileName] = useState("document.pdf");
   const [tool, setTool] = useState<Tool>("select");
   const doc = useHistory<DocState>(EMPTY_DOC);
-  const { edits, textBoxes, redactions, annotations } = doc.state;
+  const { edits, textBoxes, redactions, annotations, stamps } = doc.state;
   const [drawTool, setDrawTool] = useState<AnnotationTool>("highlight");
   const [drawStyle, setDrawStyle] = useState<DrawStyle>({ color: "#f4c400", width: 3 });
+  const [sigOpen, setSigOpen] = useState(false);
+  const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -72,7 +79,7 @@ export function App() {
     [pdf, fragmentById, edits],
   );
   const changeCount =
-    editedFragmentCount + textBoxes.length + redactions.length + annotations.length;
+    editedFragmentCount + textBoxes.length + redactions.length + annotations.length + stamps.length;
 
   const openBytes = useCallback(
     async (bytes: ArrayBuffer, name: string, note?: string) => {
@@ -245,6 +252,46 @@ export function App() {
     [selection, doc],
   );
 
+  const onPlaceStamp = useCallback(
+    (pageIndex: number, xLeft: number, yTop: number) => {
+      if (!pendingStamp) return;
+      const width = Math.min(220, pendingStamp.w * 0.75);
+      const height = width * (pendingStamp.h / pendingStamp.w);
+      const id = nextId("st");
+      const stamp: Stamp = { id, pageIndex, x: xLeft, y: yTop - height, width, height, dataUrl: pendingStamp.dataUrl };
+      doc.set((d) => ({ ...d, stamps: [...d.stamps, stamp] }));
+      setPendingStamp(null);
+      setSelection({ kind: "stamp", id });
+      setMessage("");
+    },
+    [pendingStamp, doc],
+  );
+
+  const onChangeStamp = useCallback(
+    (id: string, patch: Partial<Stamp>, key: string) => {
+      doc.set(
+        (d) => ({ ...d, stamps: d.stamps.map((s) => (s.id === id ? { ...s, ...patch } : s)) }),
+        key,
+      );
+    },
+    [doc],
+  );
+
+  const startImagePlacement = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      const img = new Image();
+      img.onload = () => {
+        setPendingStamp({ dataUrl, w: img.naturalWidth, h: img.naturalHeight });
+        setStatus("ready");
+        setMessage("Tap the page to place the image.");
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
   const onSelect = useCallback((sel: Selection) => {
     setAutoFocusId(null);
     setSelection(sel);
@@ -322,6 +369,10 @@ export function App() {
       const id = selection.id;
       doc.set((d) => ({ ...d, annotations: d.annotations.filter((a) => a.id !== id) }));
       setSelection(null);
+    } else if (selection?.kind === "stamp") {
+      const id = selection.id;
+      doc.set((d) => ({ ...d, stamps: d.stamps.filter((s) => s.id !== id) }));
+      setSelection(null);
     }
   }, [selection, doc]);
 
@@ -341,8 +392,10 @@ export function App() {
       setSelection(null);
     } else if (selection?.kind === "annotation" && !annotations.some((a) => a.id === selection.id)) {
       setSelection(null);
+    } else if (selection?.kind === "stamp" && !stamps.some((s) => s.id === selection.id)) {
+      setSelection(null);
     }
-  }, [textBoxes, redactions, annotations, selection]);
+  }, [textBoxes, redactions, annotations, stamps, selection]);
 
   // Auto-dismiss transient status messages (keep errors until superseded).
   useEffect(() => {
@@ -365,7 +418,10 @@ export function App() {
         redo();
         return;
       }
-      if (selection?.kind === "redaction" && (e.key === "Delete" || e.key === "Backspace")) {
+      if (
+        (selection?.kind === "redaction" || selection?.kind === "stamp") &&
+        (e.key === "Delete" || e.key === "Backspace")
+      ) {
         e.preventDefault();
         onDelete();
       }
@@ -388,7 +444,7 @@ export function App() {
     setStatus("exporting");
     setMessage("Building edited PDF…");
     try {
-      const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations });
+      const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations, stamps });
       const blob = new Blob([out as BlobPart], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -406,7 +462,7 @@ export function App() {
       setStatus("error");
       setMessage(`Export failed: ${String(err)}`);
     }
-  }, [pdf, edits, textBoxes, redactions, annotations, fileName]);
+  }, [pdf, edits, textBoxes, redactions, annotations, stamps, fileName]);
 
   const reset = useCallback(() => {
     if (changeCount > 0 && !confirm("Discard all changes and start over?")) return;
@@ -419,7 +475,13 @@ export function App() {
     setMenuOpen(false);
   }, [changeCount, doc]);
 
-  const pickTool = (t: Tool) => {
+  const pickTool = (t: NavKey) => {
+    setPendingStamp(null);
+    if (t === "sign") {
+      setSelection(null);
+      setSigOpen(true);
+      return;
+    }
     setTool(t);
     if (t !== "select") setSelection(null);
   };
@@ -466,6 +528,16 @@ export function App() {
                     role="menuitem"
                   >
                     <Icon name="select" size={20} /> Organize pages
+                  </button>
+                  <button
+                    className="menu__item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      imageInputRef.current?.click();
+                    }}
+                    role="menuitem"
+                  >
+                    <Icon name="image" size={20} /> Add image
                   </button>
                   <button className="menu__item" onClick={reset} role="menuitem">
                     <Icon name="note_add" size={20} /> Open another PDF
@@ -569,6 +641,8 @@ export function App() {
                 textBoxes={textBoxes.filter((b) => b.pageIndex === page.pageIndex)}
                 redactions={redactions.filter((r) => r.pageIndex === page.pageIndex)}
                 annotations={annotations.filter((a) => a.pageIndex === page.pageIndex)}
+                stamps={stamps.filter((s) => s.pageIndex === page.pageIndex)}
+                placing={!!pendingStamp}
                 selection={selection}
                 autoFocusId={autoFocusId}
                 revision={revision}
@@ -578,9 +652,11 @@ export function App() {
                 onChangeTextBox={onChangeTextBox}
                 onChangeRedaction={onChangeRedaction}
                 onChangeNoteText={onChangeNoteText}
+                onChangeStamp={onChangeStamp}
                 onAddTextBox={onAddTextBox}
                 onAddRedaction={onAddRedaction}
                 onAddAnnotation={onAddAnnotation}
+                onPlaceStamp={onPlaceStamp}
               />
             ))}
           </div>
@@ -643,6 +719,30 @@ export function App() {
           {message}
         </div>
       )}
+
+      {sigOpen && (
+        <SignatureDialog
+          onClose={() => setSigOpen(false)}
+          onCreate={(sig) => {
+            setSigOpen(false);
+            setPendingStamp(sig);
+            setStatus("ready");
+            setMessage("Tap the page to place your signature.");
+          }}
+        />
+      )}
+
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) startImagePlacement(f);
+          e.target.value = "";
+        }}
+      />
 
       {organizeOpen && pdf && (
         <Organize

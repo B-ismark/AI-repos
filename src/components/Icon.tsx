@@ -101,6 +101,19 @@ const PATHS: Record<string, ReactNode> = {
       <line x1="5" y1="12" x2="19" y2="12" />
     </>
   ),
+  signature: (
+    <>
+      <path d="M3 17c2.5 0 3-9 5.5-9S11 17 13 17s2-5 4-5 1.5 2 4 2" />
+      <path d="M2 21h20" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" fill="none" />
+      <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" stroke="none" />
+      <polyline points="21 16 15 10 4 20" />
+    </>
+  ),
   draw: (
     <>
       <path d="M15 3l6 6L9 21H3v-6z" />

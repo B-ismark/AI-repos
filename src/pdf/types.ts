@@ -109,12 +109,25 @@ export type Annotation =
   | (AnnotBase & { kind: "pen"; pts: { x: number; y: number }[]; color: string; strokeWidth: number })
   | (AnnotBase & { kind: "note"; x: number; y: number; text: string; color: string });
 
+/** A placed image (signature or picture). Rect is bottom-left in PDF units. */
+export interface Stamp {
+  id: string;
+  pageIndex: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** PNG/JPEG data URL. */
+  dataUrl: string;
+}
+
 /** The full editable document state tracked by the undo/redo history. */
 export interface DocState {
   edits: Edits;
   textBoxes: TextBox[];
   redactions: Redaction[];
   annotations: Annotation[];
+  stamps: Stamp[];
 }
 
 /** Active editing tool. */
@@ -126,4 +139,5 @@ export type Selection =
   | { kind: "textbox"; id: string }
   | { kind: "redaction"; id: string }
   | { kind: "annotation"; id: string }
+  | { kind: "stamp"; id: string }
   | null;
