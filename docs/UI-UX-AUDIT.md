@@ -7,7 +7,9 @@ in both **light** and **dark** themes.
 **Method:** static review of every component, hook, and stylesheet against
 Nielsen's usability heuristics, WCAG 2.2, the Gestalt principles, Material 3
 guidance, and the common UX "laws" (Fitts, Hick, Jakob, Miller, Doherty,
-Tesler, Aesthetic-Usability, Von Restorff).
+Tesler, Aesthetic-Usability, Von Restorff). **Part 2** additionally checks
+conformance against the official **Android (Material 3)** and **iOS (Apple
+Human Interface Guidelines)** documentation.
 **Date:** 2026-07-23
 
 ---
@@ -454,3 +456,255 @@ trust when a reviewer checks.
   roles, #10 bottom-bar congestion, #11 render feedback, #16 persistent panel,
   #9 breakpoint tiers.
 - **Larger, plan separately:** #4 full keyboard editing, #15 dark-page view.
+
+---
+---
+
+# Part 2 — Platform conformance: Android (Material 3) & iOS (Apple HIG)
+
+This section compares the app against the **official** Android and Apple design
+documentation and adds findings specific to running as an installable/mobile
+web app on those platforms. Because the app ships as a browser PWA rather than a
+native binary, "conformance" means honoring platform *conventions and
+constraints* (gesture zones, safe areas, target sizes, size-class layouts, dark
+appearance) — the things users' muscle memory and assistive tech expect.
+
+### Official guidance used as the yardstick
+
+**Material 3 (Android):**
+
+- Touch targets must be **≥ 48×48 dp**; Material components enforce this
+  internally. ([accessibility](https://developer.android.com/design/ui/mobile/guides/foundations/accessibility))
+- Contrast: **4.5:1** normal text, **3:1** large text, and **3:1** for non-text
+  UI (component container vs. background; surface vs. non-text element).
+  ([color-contrast](https://m3.material.io/foundations/designing/color-contrast))
+- **Window size classes / breakpoints:** **Compact < 600 dp** → navigation bar
+  (bottom); **Medium 600–839 dp** → navigation **rail** (~80 dp wide);
+  **Expanded ≥ 840 dp** → navigation **drawer** / two-pane canonical layouts.
+  Height breakpoints exist for short viewports.
+  ([breakpoints](https://m3.material.io/foundations/layout/breakpoints/overview),
+  [window size classes](https://m3.material.io/foundations/layout/applying-layout/window-size-classes))
+- **Navigation bar** carries **3–5 top-level destinations**; the **FAB sits
+  above** the navigation bar.
+  ([navigation bar](https://m3.material.io/components/navigation-bar/guidelines),
+  [FAB](https://m3.material.io/components/floating-action-button/guidelines))
+
+**Apple Human Interface Guidelines (iOS):**
+
+- Controls need a hit region of **≥ 44×44 pt**.
+  ([layout](https://developer.apple.com/design/human-interface-guidelines/layout))
+- **Safe areas** must inset content from the notch/Dynamic Island, rounded
+  corners, and home indicator.
+- **Dynamic Type:** support user text scaling; use text styles, avoid fixed
+  sizes. ([accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility))
+- **Gestures** should *supplement, not replace* visible controls, and must not
+  fight **system gestures** (edge-swipe back, the home-indicator swipe, which
+  the OS always wins). ([gestures](https://developer.apple.com/design/human-interface-guidelines/inputs/touchscreen-gestures/))
+- **Dark Mode** is systemwide; elevated surfaces get **lighter** (shadows read
+  poorly on dark). ([dark mode](https://developer.apple.com/design/human-interface-guidelines/dark-mode))
+
+---
+
+## Where the app already conforms (both platforms)
+
+- **Safe-area insets are handled thoroughly.** `env(safe-area-inset-*)` is
+  applied to the app bar, tool nav, viewer padding, zoom bar, FAB, dialog scrim,
+  and the organizer (`styles.css:100, 144, 188, 232, 364`; `758`; `895, 918`).
+  This is exactly what iOS HIG and Android edge-to-edge require, and many apps
+  get it wrong.
+- **Dark-mode elevation via surface tint, not just shadows.** The M3
+  `surface-container-*` ramp lightens with elevation and is used for menus,
+  dialogs, and sheets (`theme.css:123`) — matching both M3 and Apple's
+  "elevated = lighter in dark" rule.
+- **Breakpoint at 600 dp switches bottom bar → rail**, which aligns with the M3
+  Compact→Medium transition (`styles.css:975`).
+- **Navigation bar holds 5 items + FAB above it** — within the M3 "3–5
+  destinations, FAB above the bar" rule (`App.tsx:45`, `styles.css:364`).
+- **UI type scale is `rem`-based** (`theme.css:143`), so it responds to the
+  browser/OS base font size — the web equivalent of honoring Dynamic Type
+  (undercut only by the zoom lock, finding P-2).
+
+---
+
+## Platform findings summary
+
+| # | Finding | Standard | Platform | Criticality | Complexity |
+| --- | --- | --- | --- | --- | --- |
+| P-1 | Owning all touch gestures fights system gestures (edge-back, home swipe) | HIG Gestures; Android back | iOS + Android | 🟠 High | Medium |
+| P-2 | Zoom lock blocks Dynamic Type / system zoom | HIG Dynamic Type; M3 a11y | iOS + Android | 🟠 High | Low |
+| P-3 | Modals ignore the platform Back affordance | HIG; Android predictive back | iOS + Android | 🟠 High | Medium |
+| M-1 | Targets below 48 dp (Material) / 44 pt (Apple) | M3 48dp / HIG 44pt | iOS + Android | 🟠 High | Low |
+| P-4 | One-finger pan has no native momentum/rubber-band | HIG/Material "feel"; Jakob | iOS + Android | 🟡 Medium | Medium |
+| M-2 | No Expanded (≥840 dp) layout; rail never becomes a drawer | M3 size classes | Android tablet/desktop | 🟡 Medium | Medium |
+| M-3 | Rail is ~66px (< 80 dp) and semantically a toolbar, not nav | M3 nav rail | Android medium | ⚪ Low | Low |
+| i-1 | Double-tap-to-zoom collides with VoiceOver/Safari gestures | HIG accessibility | iOS | ⚪ Low | Low |
+
+---
+
+## Details
+
+### 🟠 P-1 — App-owned gestures collide with OS system gestures
+**Standard:** HIG "gestures supplement, not replace"; system gestures win.
+**Platforms:** iOS + Android.
+
+`.viewer__scroll` sets `touch-action: none` and the app implements its own
+one-finger pan, pinch, and double-tap (`styles.css:187`, `useViewport.ts:133`).
+On phones this overlaps the OS gesture zones:
+
+- **iOS left-edge swipe = Safari back.** A pan begun near the left edge either
+  triggers a browser back — which, with no unload guard (Part 1, #3), *destroys
+  all edits* — or is swallowed, confusing the user.
+- **Home-indicator / control-center swipe** shares the bottom edge where the nav
+  bar, FAB, and zoom bar live. Safe-area padding helps, but the app still places
+  its most-used controls in the OS's reserved bottom band.
+
+- **Fix:** don't blanket `touch-action: none` — use `touch-action: pan-x pan-y`
+  and only suppress the browser default during an *active* multi-touch/draw
+  gesture; keep a visible scroll affordance; ensure left-edge drags aren't
+  captured as pans. Pair with the P-3 history guard so an accidental back is
+  recoverable.
+- **Complexity:** Medium.
+
+---
+
+### 🟠 P-2 — Zoom lock defeats Dynamic Type and system zoom
+**Standard:** HIG Dynamic Type; M3 accessibility.
+**Platforms:** iOS + Android.
+
+This is finding **#2** from Part 1 seen through the platform lens.
+`user-scalable=no, maximum-scale=1.0` (`index.html:7`) contradicts both
+platforms' core accessibility promise: iOS users who raise their text size or
+pinch-zoom Safari, and Android users who enable font scaling / magnification,
+are all denied. The `rem`-based type scale that *would* have honored their
+settings is neutralized by the lock.
+
+- **Fix:** remove the scale lock (see #2); the scoped `touch-action` from P-1
+  keeps canvas gestures working without it.
+- **Complexity:** Low.
+
+---
+
+### 🟠 P-3 — Modal surfaces don't integrate with the platform Back gesture
+**Standard:** Android predictive back; iOS dismissal conventions.
+**Platforms:** iOS + Android.
+
+Dialogs, the organizer, the overflow menu, and the mobile properties sheet are
+pure React state with **no browser history entry**. So the Android **back
+gesture/button** and iOS back don't *dismiss* them — they navigate the whole
+tab away (again risking total data loss). Users on both platforms expect Back to
+close the top-most transient surface first.
+
+- **Fix:** `history.pushState` when a modal/sheet/organizer opens and close it on
+  `popstate`; only let Back leave the app when nothing is open. This also gives
+  Escape-key parity (Part 1, #5) a natural home.
+- **Complexity:** Medium.
+
+---
+
+### 🟠 M-1 — Touch targets miss both platforms' minimums
+**Standard:** Material **48×48 dp**; Apple **44×44 pt**.
+**Platforms:** iOS + Android.
+
+Part 1, #7 flagged this against WCAG; against the platform specs it is a
+definite fail on **both**: `.icon-btn` 40px < 44pt < 48dp (`styles.css:29`),
+`.btn` 38px tall (`styles.css:63`), and the 22px saved-signature delete
+(`styles.css:806`). Material's own components would never ship at 40dp, so the
+app reads as sub-spec on Android in particular.
+
+- **Fix:** 48px hit areas on Android-class targets (visual size can stay smaller
+  via transparent padding); never below 44px anywhere. See #7.
+- **Complexity:** Low.
+
+---
+
+### 🟡 P-4 — One-finger panning has no native momentum or rubber-band
+**Standard:** platform "feel"; Jakob's Law (match native behavior).
+**Platforms:** iOS + Android.
+
+Because `touch-action: none` disables native scrolling and pan is applied by
+directly mutating `scrollLeft/scrollTop` each move (`useViewport.ts:143`), a
+flick just stops dead on release — no inertial glide, no edge bounce. Both
+platforms' users are deeply accustomed to momentum scrolling; its absence makes
+the single most-used gesture feel subtly broken and "webby."
+
+- **Fix:** prefer native scrolling (P-1's scoped `touch-action`) so the platform
+  supplies momentum; if custom pan is retained, add a velocity-based inertial
+  animation on release.
+- **Complexity:** Medium.
+
+---
+
+### 🟡 M-2 — No Expanded (≥ 840 dp) layout; the rail never becomes a drawer
+**Standard:** M3 window size classes.
+**Platforms:** Android tablet, ChromeOS, desktop.
+
+The one `min-width: 600px` rule (`styles.css:975`) serves Medium and Expanded
+identically. M3 defines a distinct **Expanded ≥ 840 dp** class that should adopt
+a navigation drawer and/or two-pane canonical layouts and cap content width.
+This is Part 1, #9 stated against the official threshold: today a 1280 dp
+tablet/desktop gets the same 66px rail as a 600 dp phone-in-landscape.
+
+- **Fix:** add an `@media (min-width: 840px)` (≈Expanded) tier — wider labeled
+  navigation, a persistent properties pane, and a page-column max-width / two-up
+  spread. See #9, #16.
+- **Complexity:** Medium.
+
+---
+
+### ⚪ M-3 — The rail is under-width and semantically a toolbar
+**Standard:** M3 navigation rail (~80 dp) and navigation semantics.
+**Platforms:** Android medium.
+
+The rail is 66px (`styles.css:983`) versus M3's ~80 dp, and it hosts *tools*
+(Select/Text/Draw/Sign/Redact) styled as an M3 **navigation** bar/rail —
+components meant for **top-level destinations**, not mode switches. It reads
+convincingly, but strict M3 would model tool selection as a toolbar / segmented
+control and reserve nav components for navigation.
+
+- **Fix:** widen to 80 dp, or re-label the pattern as a tool rail and drop the
+  nav-indicator semantics; low urgency since the adaptation is intuitive.
+- **Complexity:** Low.
+
+---
+
+### ⚪ i-1 — Double-tap-to-zoom overlaps iOS assistive gestures
+**Standard:** HIG accessibility / gestures.
+**Platforms:** iOS.
+
+The canvas double-tap toggles fit⇄2× (`useViewport.ts:173`). On iOS, double-tap
+is also VoiceOver's "activate" gesture and (absent the zoom lock) Safari's
+smart-zoom. For VoiceOver users interacting with the page, the app's meaning can
+compete with the assistive one.
+
+- **Fix:** gate the custom double-tap when an assistive service is likely active,
+  and always provide the same action via the visible zoom controls (already
+  present) so the gesture is a supplement, not the only path.
+- **Complexity:** Low.
+
+---
+
+## Updated sequencing (Part 1 + Part 2)
+
+- **Quick wins:** P-2/#2 (zoom lock), M-1/#7 (targets), plus the Part 1 trivials
+  (#1 focus, #3 unload guard, #8 live regions).
+- **Platform-integration batch:** P-1 (scoped `touch-action`), P-3 (history-based
+  back/Escape for modals), P-4 (native/inertial scrolling) — these three are
+  interrelated and best done together.
+- **Adaptive-layout batch:** M-2/#9 Expanded tier, #16 persistent pane, M-3 rail.
+- **Larger:** #4 full keyboard editing, #15 dark-page view, i-1 assistive-gesture
+  gating.
+
+## Sources
+
+- Material 3 — [Breakpoints](https://m3.material.io/foundations/layout/breakpoints/overview),
+  [Window size classes](https://m3.material.io/foundations/layout/applying-layout/window-size-classes),
+  [Color & contrast](https://m3.material.io/foundations/designing/color-contrast),
+  [Navigation bar](https://m3.material.io/components/navigation-bar/guidelines),
+  [Navigation rail](https://m3.material.io/components/navigation-rail/guidelines),
+  [FAB](https://m3.material.io/components/floating-action-button/guidelines)
+- Android — [Accessibility (touch targets)](https://developer.android.com/design/ui/mobile/guides/foundations/accessibility),
+  [Use window size classes](https://developer.android.com/develop/adaptive-apps/guides/use-window-size-classes)
+- Apple HIG — [Layout](https://developer.apple.com/design/human-interface-guidelines/layout),
+  [Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility),
+  [Gestures](https://developer.apple.com/design/human-interface-guidelines/inputs/touchscreen-gestures/),
+  [Dark Mode](https://developer.apple.com/design/human-interface-guidelines/dark-mode)
