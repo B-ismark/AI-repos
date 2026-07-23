@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { Icon } from "./Icon";
-import { startElementGesture, startPointerDrag } from "../hooks/useDrag";
+import { startElementGesture } from "../hooks/useDrag";
+import { SelectionFrame, type Geom } from "./SelectionFrame";
 import type { Stamp } from "../pdf/types";
 
 interface Props {
@@ -16,15 +17,17 @@ interface Props {
 
 const MIN_W = 24;
 
-/** A placed image (signature / picture): draggable, corner-resizable (aspect
- * preserved), selectable. */
+/** A placed image (signature / picture): draggable, resizable from any edge or
+ * corner (corners keep aspect), rotatable, selectable. */
 export function StampItem({ stamp, scale, pageHeight, selected, interactive, onSelect, onChange, onDelete }: Props) {
   const gesture = useRef(0);
+  const boxRef = useRef<HTMLDivElement>(null);
   const H = pageHeight;
   const left = stamp.x * scale;
   const top = (H - (stamp.y + stamp.height)) * scale;
   const w = stamp.width * scale;
   const h = stamp.height * scale;
+  const rot = stamp.rotation ?? 0;
 
   const beginMove = (e: React.PointerEvent) => {
     const key = `move-st-${stamp.id}-${++gesture.current}`;
@@ -36,23 +39,37 @@ export function StampItem({ stamp, scale, pageHeight, selected, interactive, onS
     });
   };
 
-  const beginResize = (e: React.PointerEvent) => {
-    const key = `resize-st-${stamp.id}-${++gesture.current}`;
-    const s = { w: stamp.width, h: stamp.height, top: stamp.y + stamp.height };
-    const aspect = stamp.height / stamp.width;
-    startPointerDrag(e, {
-      onMove: (dx) => {
-        const width = Math.max(MIN_W, s.w + dx / scale);
-        const height = width * aspect;
-        onChange(stamp.id, { width, height, y: s.top - height }, key);
+  // Screen geometry → PDF patch (bottom-left origin, y up).
+  const applyGeom = (g: Geom, key: string) => {
+    const nLeft = g.cx - g.w / 2;
+    const nTop = g.cy - g.h / 2;
+    onChange(
+      stamp.id,
+      {
+        x: nLeft / scale,
+        y: H - (nTop + g.h) / scale,
+        width: g.w / scale,
+        height: g.h / scale,
+        rotation: g.rot,
       },
-    });
+      key,
+    );
   };
+
+  const geom: Geom = { cx: left + w / 2, cy: top + h / 2, w, h, rot };
 
   return (
     <div
+      ref={boxRef}
       className={`stamp${selected ? " stamp--sel" : ""}`}
-      style={{ left: `${left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px`, pointerEvents: interactive ? "auto" : "none" }}
+      style={{
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${w}px`,
+        height: `${h}px`,
+        transform: rot ? `rotate(${rot}deg)` : undefined,
+        pointerEvents: interactive ? "auto" : "none",
+      }}
       onPointerDown={beginMove}
     >
       <img src={stamp.dataUrl} alt="" draggable={false} />
@@ -74,7 +91,14 @@ export function StampItem({ stamp, scale, pageHeight, selected, interactive, onS
           >
             <Icon name="close" size={14} />
           </button>
-          <div className="handle stamp__resize" onPointerDown={beginResize} />
+          <SelectionFrame
+            geom={geom}
+            containerRef={boxRef}
+            minSize={MIN_W}
+            aspect={stamp.height / stamp.width}
+            idPrefix={`st-${stamp.id}`}
+            onTransform={applyGeom}
+          />
         </>
       )}
     </div>

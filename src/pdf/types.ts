@@ -101,10 +101,12 @@ interface AnnotBase {
   pageIndex: number;
 }
 
-/** A drawn annotation. Coordinates are in PDF units (origin bottom-left). */
+/** A drawn annotation. Coordinates are in PDF units (origin bottom-left).
+ * `rotation` (degrees, clockwise in screen space, about the box centre) is
+ * optional on the box-shaped kinds; absent/0 means axis-aligned. */
 export type Annotation =
-  | (AnnotBase & { kind: "highlight"; x: number; y: number; width: number; height: number; color: string })
-  | (AnnotBase & { kind: "rect"; x: number; y: number; width: number; height: number; color: string; strokeWidth: number })
+  | (AnnotBase & { kind: "highlight"; x: number; y: number; width: number; height: number; color: string; rotation?: number })
+  | (AnnotBase & { kind: "rect"; x: number; y: number; width: number; height: number; color: string; strokeWidth: number; rotation?: number })
   | (AnnotBase & { kind: "line" | "arrow"; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number })
   | (AnnotBase & { kind: "pen"; pts: { x: number; y: number }[]; color: string; strokeWidth: number })
   | (AnnotBase & { kind: "note"; x: number; y: number; text: string; color: string });
@@ -117,6 +119,8 @@ export interface Stamp {
   y: number;
   width: number;
   height: number;
+  /** Rotation in degrees, clockwise in screen space, about the box centre. */
+  rotation?: number;
   /** PNG/JPEG data URL. */
   dataUrl: string;
 }

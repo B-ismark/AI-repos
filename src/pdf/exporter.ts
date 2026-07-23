@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
 import {
   DEFAULT_STYLE,
@@ -49,20 +49,47 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 const NOTE_SIZE = 12;
 const NOTE_PAD = 4;
 
+/**
+ * Bottom-left origin of a box after rotating it about its centre. `rotDeg` is
+ * the on-screen clockwise angle; PDF space is y-up, so the PDF angle is `-rot`.
+ * pdf-lib's `rotate` pivots about the origin, so we pre-shift the origin to keep
+ * the centre fixed. Returns the origin plus the matching pdf-lib angle.
+ */
+function rotatedBox(x: number, y: number, w: number, h: number, rotDeg: number) {
+  const th = (-rotDeg * Math.PI) / 180;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const cos = Math.cos(th);
+  const sin = Math.sin(th);
+  const ox = (-w / 2) * cos - (-h / 2) * sin;
+  const oy = (-w / 2) * sin + (-h / 2) * cos;
+  return { x: cx + ox, y: cy + oy, rotate: degrees(-rotDeg) };
+}
+
 /** Draw vector annotations onto a pdf-lib page (PDF coords, y up). */
 function drawVectorAnnots(page: PDFPage, annots: Annotation[], helv: PDFFont): void {
   for (const a of annots) {
     const c = hexToRgb(a.color);
     const color = rgb(c.r, c.g, c.b);
     if (a.kind === "highlight") {
-      page.drawRectangle({ x: a.x, y: a.y, width: a.width, height: a.height, color, opacity: 0.4 });
+      if (a.rotation) {
+        const r = rotatedBox(a.x, a.y, a.width, a.height, a.rotation);
+        page.drawRectangle({ x: r.x, y: r.y, width: a.width, height: a.height, color, opacity: 0.4, rotate: r.rotate });
+      } else {
+        page.drawRectangle({ x: a.x, y: a.y, width: a.width, height: a.height, color, opacity: 0.4 });
+      }
     } else if (a.kind === "rect") {
       const t = a.strokeWidth;
       const { x, y, width: w, height: h } = a;
-      page.drawLine({ start: { x, y }, end: { x: x + w, y }, thickness: t, color });
-      page.drawLine({ start: { x: x + w, y }, end: { x: x + w, y: y + h }, thickness: t, color });
-      page.drawLine({ start: { x: x + w, y: y + h }, end: { x, y: y + h }, thickness: t, color });
-      page.drawLine({ start: { x, y: y + h }, end: { x, y }, thickness: t, color });
+      if (a.rotation) {
+        const r = rotatedBox(x, y, w, h, a.rotation);
+        page.drawRectangle({ x: r.x, y: r.y, width: w, height: h, borderColor: color, borderWidth: t, rotate: r.rotate });
+      } else {
+        page.drawLine({ start: { x, y }, end: { x: x + w, y }, thickness: t, color });
+        page.drawLine({ start: { x: x + w, y }, end: { x: x + w, y: y + h }, thickness: t, color });
+        page.drawLine({ start: { x: x + w, y: y + h }, end: { x, y: y + h }, thickness: t, color });
+        page.drawLine({ start: { x, y: y + h }, end: { x, y }, thickness: t, color });
+      }
     } else if (a.kind === "line" || a.kind === "arrow") {
       page.drawLine({ start: { x: a.x1, y: a.y1 }, end: { x: a.x2, y: a.y2 }, thickness: a.strokeWidth, color });
       if (a.kind === "arrow") {
@@ -114,14 +141,24 @@ function drawRasterAnnots(
     ctx.fillStyle = a.color;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+    // Rotate the canvas about the box centre for rotated box kinds.
+    const box = a.kind === "highlight" || a.kind === "rect" ? a : null;
+    const rotate = box?.rotation ?? 0;
+    if (box && rotate) {
+      ctx.save();
+      ctx.translate(X(box.x + box.width / 2), Y(box.y + box.height / 2));
+      ctx.rotate((rotate * Math.PI) / 180);
+    }
     if (a.kind === "highlight") {
       ctx.save();
       ctx.globalAlpha = 0.4;
-      ctx.fillRect(X(a.x), Y(a.y + a.height), a.width * S, a.height * S);
+      if (rotate) ctx.fillRect(-a.width * S / 2, -a.height * S / 2, a.width * S, a.height * S);
+      else ctx.fillRect(X(a.x), Y(a.y + a.height), a.width * S, a.height * S);
       ctx.restore();
     } else if (a.kind === "rect") {
       ctx.lineWidth = a.strokeWidth * S;
-      ctx.strokeRect(X(a.x), Y(a.y + a.height), a.width * S, a.height * S);
+      if (rotate) ctx.strokeRect(-a.width * S / 2, -a.height * S / 2, a.width * S, a.height * S);
+      else ctx.strokeRect(X(a.x), Y(a.y + a.height), a.width * S, a.height * S);
     } else if (a.kind === "line" || a.kind === "arrow") {
       ctx.lineWidth = a.strokeWidth * S;
       const sx1 = X(a.x1), sy1 = Y(a.y1), sx2 = X(a.x2), sy2 = Y(a.y2);
@@ -158,6 +195,7 @@ function drawRasterAnnots(
       ctx.fillStyle = "#000";
       ctx.fillText(a.text, X(a.x) + pad, Y(a.y) + pad);
     }
+    if (rotate) ctx.restore();
   }
 }
 
@@ -269,7 +307,12 @@ export async function exportPdf(
 
     for (const s of pageStamps) {
       const img = await embedStamp(out, s.dataUrl);
-      page.drawImage(img, { x: s.x, y: s.y, width: s.width, height: s.height });
+      if (s.rotation) {
+        const r = rotatedBox(s.x, s.y, s.width, s.height, s.rotation);
+        page.drawImage(img, { x: r.x, y: r.y, width: s.width, height: s.height, rotate: r.rotate });
+      } else {
+        page.drawImage(img, { x: s.x, y: s.y, width: s.width, height: s.height });
+      }
     }
   }
 
@@ -335,7 +378,15 @@ async function rasterisePage(
   // Stamps (signatures / images).
   for (const s of stamps) {
     const img = await loadImage(s.dataUrl);
-    ctx.drawImage(img, s.x * S, (H - (s.y + s.height)) * S, s.width * S, s.height * S);
+    if (s.rotation) {
+      ctx.save();
+      ctx.translate((s.x + s.width / 2) * S, (H - (s.y + s.height / 2)) * S);
+      ctx.rotate((s.rotation * Math.PI) / 180);
+      ctx.drawImage(img, -s.width * S / 2, -s.height * S / 2, s.width * S, s.height * S);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, s.x * S, (H - (s.y + s.height)) * S, s.width * S, s.height * S);
+    }
   }
 
   // Redactions painted solid — this is what actually removes the content,

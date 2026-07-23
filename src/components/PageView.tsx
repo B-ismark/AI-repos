@@ -18,6 +18,7 @@ import { RedactionItem } from "./RedactionItem";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { NoteItem } from "./NoteItem";
 import { StampItem } from "./StampItem";
+import { AnnotationFrame } from "./AnnotationFrame";
 import { dragState } from "../hooks/useDrag";
 import type { Stamp } from "../pdf/types";
 
@@ -218,6 +219,22 @@ export function PageView(props: Props) {
             onSelect={(id) => onSelect({ kind: "annotation", id })}
             onMove={onMoveAnnotation}
           />
+
+          {/* Resize/rotate chrome for a selected rect or highlight box. */}
+          {tool === "select" &&
+            selection?.kind === "annotation" &&
+            (() => {
+              const sel = nonNote.find((a) => a.id === selection.id);
+              if (!sel || (sel.kind !== "rect" && sel.kind !== "highlight")) return null;
+              return (
+                <AnnotationFrame
+                  annot={sel}
+                  scale={scale}
+                  pageHeight={H}
+                  onMove={onMoveAnnotation}
+                />
+              );
+            })()}
 
           {page.fragments.map((fragment) => {
             const edit = edits[fragment.id];
