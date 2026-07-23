@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { startElementGesture, startPointerDrag } from "../hooks/useDrag";
+import { clearGuides, setGuides, snapBox } from "../hooks/useSnap";
 import { Icon } from "./Icon";
 import type { LinkAnnot } from "../pdf/types";
 
@@ -7,6 +8,7 @@ interface Props {
   link: LinkAnnot;
   scale: number;
   pageHeight: number;
+  pageWidth: number;
   selected: boolean;
   interactive: boolean;
   onSelect: (id: string) => void;
@@ -30,7 +32,7 @@ const MIN = 8;
 
 /** A clickable-link region: a translucent box, draggable and resizable, whose
  * URL is edited in the properties panel. */
-export function LinkItem({ link, scale, pageHeight, selected, interactive, onSelect, onChange }: Props) {
+export function LinkItem({ link, scale, pageHeight, pageWidth, selected, interactive, onSelect, onChange }: Props) {
   const gesture = useRef(0);
   const H = pageHeight;
   const left = link.x * scale;
@@ -52,7 +54,13 @@ export function LinkItem({ link, scale, pageHeight, selected, interactive, onSel
     startElementGesture(e, {
       selected,
       onSelect: () => onSelect(link.id),
-      onMove: (dx, dy) => onChange(link.id, cssToPdf(s.left + dx, s.top + dy, width, height), key),
+      onMove: (dx, dy) => {
+        const g = cssToPdf(s.left + dx, s.top + dy, width, height);
+        const sn = snapBox(g.x, g.y, g.width, g.height, pageWidth, H, 6 / scale);
+        onChange(link.id, { x: sn.x, y: sn.y, width: g.width, height: g.height }, key);
+        setGuides(sn.gx, sn.gy);
+      },
+      onEnd: clearGuides,
     });
   };
 

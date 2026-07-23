@@ -20,6 +20,7 @@ import { NoteItem } from "./NoteItem";
 import { StampItem } from "./StampItem";
 import { AnnotationFrame } from "./AnnotationFrame";
 import { dragState } from "../hooks/useDrag";
+import { useGuides } from "../hooks/useSnap";
 import type { LinkAnnot, Stamp } from "../pdf/types";
 import type { FindMatch } from "../pdf/find";
 import { LinkItem } from "./LinkItem";
@@ -119,6 +120,8 @@ export function PageView(props: Props) {
   const W = page.viewBox.width * scale;
   const Hpx = page.viewBox.height * scale;
   const H = page.viewBox.height;
+  const Wpdf = page.viewBox.width;
+  const guides = useGuides();
 
   const local = (cx: number, cy: number) => {
     const r = overlayRef.current!.getBoundingClientRect();
@@ -321,6 +324,7 @@ export function PageView(props: Props) {
               box={box}
               scale={scale}
               pageHeight={H}
+              pageWidth={Wpdf}
               selected={selection?.kind === "textbox" && selection.id === box.id}
               interactive={tool === "select"}
               editing={!compact || editingId === box.id}
@@ -338,6 +342,7 @@ export function PageView(props: Props) {
               redaction={r}
               scale={scale}
               pageHeight={H}
+              pageWidth={Wpdf}
               selected={selection?.kind === "redaction" && selection.id === r.id}
               interactive={tool === "select"}
               onSelect={(id) => onSelect({ kind: "redaction", id })}
@@ -351,6 +356,7 @@ export function PageView(props: Props) {
               stamp={s}
               scale={scale}
               pageHeight={H}
+              pageWidth={Wpdf}
               selected={selection?.kind === "stamp" && selection.id === s.id}
               interactive={tool === "select"}
               onSelect={(id) => onSelect({ kind: "stamp", id })}
@@ -365,12 +371,22 @@ export function PageView(props: Props) {
               link={l}
               scale={scale}
               pageHeight={H}
+              pageWidth={Wpdf}
               selected={selection?.kind === "link" && selection.id === l.id}
               interactive={tool === "select"}
               onSelect={(id) => onSelect({ kind: "link", id })}
               onChange={onChangeLink}
             />
           ))}
+
+          {/* Snap guide lines (shown while dragging an element near a page
+              edge or centre line). */}
+          {guides.gx != null && (
+            <div className="snapguide snapguide--v" style={{ left: guides.gx * scale }} />
+          )}
+          {guides.gy != null && (
+            <div className="snapguide snapguide--h" style={{ top: (H - guides.gy) * scale }} />
+          )}
 
           {/* Live draw preview */}
           {g && <DrawPreview g={g} color={drawStyle.color} width={drawStyle.width} scale={scale} />}

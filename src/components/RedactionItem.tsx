@@ -1,11 +1,13 @@
 import { useRef } from "react";
 import { startElementGesture, startPointerDrag } from "../hooks/useDrag";
+import { clearGuides, setGuides, snapBox } from "../hooks/useSnap";
 import type { Redaction } from "../pdf/types";
 
 interface Props {
   redaction: Redaction;
   scale: number;
   pageHeight: number;
+  pageWidth: number;
   selected: boolean;
   interactive: boolean;
   onSelect: (id: string) => void;
@@ -42,6 +44,7 @@ export function RedactionItem({
   redaction,
   scale,
   pageHeight,
+  pageWidth,
   selected,
   interactive,
   onSelect,
@@ -69,8 +72,13 @@ export function RedactionItem({
     startElementGesture(e, {
       selected,
       onSelect: () => onSelect(redaction.id),
-      onMove: (dx, dy) =>
-        onChange(redaction.id, cssToPdf(s.left + dx, s.top + dy, width, height), key),
+      onMove: (dx, dy) => {
+        const g = cssToPdf(s.left + dx, s.top + dy, width, height);
+        const sn = snapBox(g.x, g.y, g.width, g.height, pageWidth, H, 6 / scale);
+        onChange(redaction.id, { x: sn.x, y: sn.y, width: g.width, height: g.height }, key);
+        setGuides(sn.gx, sn.gy);
+      },
+      onEnd: clearGuides,
     });
   };
 

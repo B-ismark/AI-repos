@@ -1,12 +1,14 @@
 import { memo, useEffect, useRef } from "react";
 import { CSS_FONT } from "../pdf/style";
 import { startPointerDrag, tapSelect } from "../hooks/useDrag";
+import { clearGuides, setGuides, snapBox } from "../hooks/useSnap";
 import type { TextBox } from "../pdf/types";
 
 interface Props {
   box: TextBox;
   scale: number;
   pageHeight: number;
+  pageWidth: number;
   selected: boolean;
   interactive: boolean;
   /** Typing allowed now (always on desktop; edit mode only on mobile). */
@@ -27,6 +29,7 @@ function TextBoxItemImpl({
   box,
   scale,
   pageHeight,
+  pageWidth,
   selected,
   interactive,
   editing,
@@ -65,9 +68,17 @@ function TextBoxItemImpl({
     onSelect(box.id);
     const key = `move-tb-${box.id}-${++gesture.current}`;
     const s = { x: box.x, y: box.y };
+    const wPdf = (ref.current?.offsetWidth ?? 0) / scale;
+    const hPdf = box.style.size;
     startPointerDrag(e, {
-      onMove: (dx, dy) =>
-        onChange(box.id, { x: s.x + dx / scale, y: s.y - dy / scale }, key),
+      onMove: (dx, dy) => {
+        const px = s.x + dx / scale;
+        const py = s.y - dy / scale;
+        const sn = snapBox(px, py, wPdf, hPdf, pageWidth, H, 6 / scale);
+        onChange(box.id, { x: sn.x, y: sn.y }, key);
+        setGuides(sn.gx, sn.gy);
+      },
+      onEnd: clearGuides,
     });
   };
 

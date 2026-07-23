@@ -765,6 +765,11 @@ body {
 .redaction--cover { outline: 1px dashed color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
 .whiteout--preview { position: absolute; background: rgba(255, 255, 255, 0.85); border: 1px dashed var(--primary); pointer-events: none; }
 
+/* ============ Snap guides ============ */
+.snapguide { position: absolute; background: var(--primary); pointer-events: none; z-index: 6; opacity: 0.9; }
+.snapguide--v { top: 0; bottom: 0; width: 1px; }
+.snapguide--h { left: 0; right: 0; height: 1px; }
+
 /* ============ Link regions ============ */
 .linkbox {
   position: absolute;
