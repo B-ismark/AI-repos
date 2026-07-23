@@ -1,5 +1,6 @@
 import { PDFCheckBox, PDFDocument, PDFString, PDFTextField, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
+import { yieldToUI } from "./yield";
 import {
   DEFAULT_STYLE,
   cssFont,
@@ -330,6 +331,9 @@ export async function exportPdf(
   let done = 0;
   for (const pageData of loaded.pages) {
     onProgress?.(++done, loaded.pages.length);
+    // Let the browser paint progress / stay responsive between pages (the
+    // per-page render + encode is the heavy, main-thread part).
+    await yieldToUI();
     const i = pageData.pageIndex;
     const pageBoxes = textBoxes.filter((t) => t.pageIndex === i);
     const pageRedactions = redactions.filter((r) => r.pageIndex === i);

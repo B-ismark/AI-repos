@@ -1927,12 +1927,15 @@ export function App() {
       {message && (
         <div
           className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}${busy ? " snackbar--busy" : ""}`}
-          aria-hidden="true"
         >
+          {/* The message text is announced by the sr-only live regions above,
+              so it's hidden from AT here to avoid a double read. The Cancel
+              button, however, must stay in the accessibility tree and the tab
+              order — so this container is NOT aria-hidden. */}
           {busy && <span className="spinner spinner--sm" aria-hidden="true" />}
-          <span className="snackbar__msg">{message}</span>
+          <span className="snackbar__msg" aria-hidden="true">{message}</span>
           {busy && onCancel && (
-            <button className="snackbar__cancel" onClick={() => onCancel()}>
+            <button className="snackbar__cancel" onClick={() => onCancel()} aria-label="Cancel the current operation">
               Cancel
             </button>
           )}
