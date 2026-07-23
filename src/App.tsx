@@ -189,6 +189,10 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [multi, setMulti] = useState<string[]>([]);
+  // Adaptive Workspace: the right Inspector collapses to an edge tab (desktop)
+  // to hand the canvas maximum room; it's never empty (properties when
+  // something is selected, document/finishing actions otherwise).
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [compressOpen, setCompressOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -1609,6 +1613,48 @@ export function App() {
     />
   );
 
+  // The Inspector's "nothing selected" state: the document + finishing actions
+  // that used to hide in the overflow menu, now grouped and always in reach.
+  const documentPanel = (
+    <div className="props">
+      <div className="props__header">
+        <span className="props__title title-medium">Document</span>
+      </div>
+      <div className="doclist">
+        <span className="doclist__label label-medium">Organise</span>
+        <button className="doclist__item" onClick={() => { setSelection(null); setOrganizeOpen(true); }}>
+          <Icon name="layers" size={18} /> Reorder / merge pages
+        </button>
+        <button className="doclist__item" onClick={() => imageInputRef.current?.click()}>
+          <Icon name="image" size={18} /> Add image
+        </button>
+        <span className="doclist__label label-medium">Recognise text</span>
+        <button className="doclist__item" onClick={runOcr}>
+          <Icon name="scan_text" size={18} /> OCR (make scans searchable)
+        </button>
+        <button className="doclist__item" onClick={copyAllText}>
+          <Icon name="content_copy" size={18} /> Copy all text
+        </button>
+        <span className="doclist__label label-medium">Finish</span>
+        <button className="doclist__item" onClick={() => { setSelection(null); setFinishTab("numbers"); }}>
+          <Icon name="tag" size={18} /> Page numbers
+        </button>
+        <button className="doclist__item" onClick={() => { setSelection(null); setFinishTab("watermark"); }}>
+          <Icon name="watermark" size={18} /> Watermark
+        </button>
+        <button className="doclist__item" onClick={exportImages}>
+          <Icon name="image" size={18} /> Export as images
+        </button>
+        <button className="doclist__item" onClick={() => { setSelection(null); setCompressOpen(true); }}>
+          <Icon name="compress" size={18} /> Compress PDF
+        </button>
+        <button className="doclist__item" onClick={exportTextFile}>
+          <Icon name="content_copy" size={18} /> Export text (.txt)
+        </button>
+      </div>
+    </div>
+  );
+
   if (!pdf) {
     return (
       <div className="app">
@@ -1687,23 +1733,6 @@ export function App() {
             />
           </>
         )}
-        <nav className="toolnav" aria-label="Tools">
-          {TOOLS.map((t) => (
-            <button
-              key={t.key}
-              className={`toolnav__btn${tool === t.key ? " toolnav__btn--on" : ""}`}
-              onClick={() => pickTool(t.key)}
-              aria-pressed={tool === t.key}
-              data-tip={`${t.label} · ${TOOL_SHORTCUT[t.key]}`}
-            >
-              <span className="toolnav__ind">
-                <Icon name={t.icon} size={21} filled={tool === t.key} />
-              </span>
-              <span className="toolnav__label label-medium">{t.label}</span>
-            </button>
-          ))}
-        </nav>
-
         <div className="viewer">
           <div
             className="viewer__scroll"
@@ -1774,6 +1803,28 @@ export function App() {
           </div>
           )}
 
+          {/* Unified tool dock — one home for every tool, identical on desktop
+              and mobile (replaces the split rail / bottom bar). */}
+          {!sheetOpen && (
+            <div className="tooldock" role="toolbar" aria-label="Tools">
+              {TOOLS.map((t, i) => (
+                <span key={t.key} style={{ display: "contents" }}>
+                  {i === 1 && <span className="tooldock__sep" />}
+                  {t.key === "sign" && <span className="tooldock__sep" />}
+                  <button
+                    className={`tooldock__btn${tool === t.key ? " tooldock__btn--on" : ""}`}
+                    onClick={() => pickTool(t.key)}
+                    aria-pressed={tool === t.key}
+                    aria-label={t.label}
+                    data-tip={`${t.label} · ${TOOL_SHORTCUT[t.key]}`}
+                  >
+                    <Icon name={t.icon} size={20} filled={tool === t.key} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           {findOpen && (
             <FindBar
               query={findQuery}
@@ -1835,13 +1886,34 @@ export function App() {
           )}
         </div>
 
-        {/* Stamps are edited directly on the canvas (no panel). Wide screens
-            get a persistent side panel so the layout doesn't shift. On phones,
-            a single tap shows the contextual SelectionBar (above) — the full
-            properties sheet opens only on demand (its Style action), so it
-            never auto-covers the selected object. */}
+        {/* Adaptive Inspector. Desktop: a persistent right column that
+            collapses to an edge tab; never empty (properties when something is
+            selected, document/finishing actions otherwise). Mobile: keeps the
+            on-demand bottom sheet driven by the contextual SelectionBar. */}
         {isWide ? (
-          <aside className="panel">{propertiesPanel}</aside>
+          inspectorOpen ? (
+            <aside className="inspector">
+              <button
+                className="inspector__collapse icon-btn"
+                onClick={() => setInspectorOpen(false)}
+                aria-label="Collapse panel"
+                data-tip="Collapse"
+              >
+                <Icon name="chevron_right" size={18} />
+              </button>
+              {panelSelection ? propertiesPanel : documentPanel}
+            </aside>
+          ) : (
+            <button
+              className="inspector__tab"
+              onClick={() => setInspectorOpen(true)}
+              aria-label="Open panel"
+              data-tip="Open panel"
+            >
+              <Icon name="sliders" size={18} />
+              <span className="inspector__tablabel">{panelSelection ? "Edit" : "Document"}</span>
+            </button>
+          )
         ) : (
           sheetOpen &&
           panelSelection && (
@@ -1855,21 +1927,6 @@ export function App() {
           )
         )}
       </div>
-
-      {/* Mobile primary action (hidden while the properties sheet is open) */}
-      {!sheetOpen && (
-        <button
-          className="fab"
-          onClick={download}
-          disabled={status === "exporting"}
-          aria-label="Download PDF"
-        >
-          <Icon name={status === "exporting" ? "hourglass_top" : "download"} size={20} />
-          <span className="fab__label label-large">
-            {status === "exporting" ? "Exporting…" : "Download"}
-          </span>
-        </button>
-      )}
 
       {/* Persistent, visually-hidden live regions guarantee the status is
           announced by assistive tech even though the visible snackbar mounts

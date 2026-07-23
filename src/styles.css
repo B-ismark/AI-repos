@@ -547,6 +547,109 @@ body {
 }
 .fab:disabled { opacity: 0.6; }
 
+/* ============ Tool dock (unified, all breakpoints) ============ */
+.tooldock {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 24px);
+  padding: 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-container-high);
+  box-shadow: var(--shadow-3);
+  z-index: 16;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tooldock::-webkit-scrollbar { display: none; }
+.tooldock__sep { width: 1px; height: 26px; background: var(--outline-variant); margin: 0 4px; flex: none; }
+.tooldock__btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+.tooldock__btn:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
+.tooldock__btn--on { background: var(--secondary-container); color: var(--on-secondary-container); }
+
+/* ============ Adaptive Inspector (desktop right column) ============ */
+.inspector {
+  position: relative;
+  width: 288px;
+  flex: none;
+  background: var(--surface-container-low);
+  border-left: 1px solid var(--outline-variant);
+  overflow: hidden auto;
+  animation: panel-in var(--dur-med2) var(--ease-emphasized-decelerate);
+}
+.inspector__collapse { position: absolute; top: 6px; right: 6px; z-index: 2; width: 36px; height: 36px; }
+.inspector .props { padding-top: 6px; }
+.inspector .props::before { display: none; }
+.inspector .props__header .icon-btn { display: none; }
+.inspector__tab {
+  flex: none;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  border: none;
+  border-left: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+.inspector__tab:hover { background: var(--surface-container); color: var(--on-surface); }
+.inspector__tablabel {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font: 500 0.75rem/1 var(--font-plain);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+@media (min-width: 840px) {
+  .inspector { width: 320px; }
+}
+
+/* Grouped document/finishing actions (Inspector "nothing selected" state). */
+.doclist { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 12px; }
+.doclist__label {
+  color: var(--on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 14px 4px 2px;
+}
+.doclist__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font-size: 0.875rem;
+  text-align: left;
+}
+.doclist__item:hover { background: var(--surface-container-high); }
+.doclist__item svg { color: var(--on-surface-variant); flex: none; }
+
 /* ============ Menu ============ */
 .menu { position: relative; }
 .menu__scrim { position: fixed; inset: 0; z-index: 40; }
@@ -1510,7 +1613,8 @@ body {
   }
   .toolnav__btn { flex: none; max-width: none; padding: 4px 0; }
 
-  .viewer__scroll { padding-bottom: 0; }
+  /* Clear the floating tool dock at the bottom. */
+  .viewer__scroll { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
   .zoombar { left: auto; right: 16px; bottom: 16px; }
 
   .scrim { display: none; }
@@ -1534,12 +1638,17 @@ body {
   .panel .props__header .icon-btn { display: none; }
 
   .fab { display: none; }
-  .snackbar { top: auto; bottom: 24px; }
+  /* Sit above the floating tool dock so it never covers the tools. */
+  .snackbar { top: auto; bottom: 88px; }
 }
 
 @media (max-width: 599px) {
-  .appbar__download { display: none; }
+  /* Download stays in the app bar on every breakpoint (no more FAB) — icon-only
+     on phones to save room. */
+  .appbar__download { padding: 0; width: 44px; }
+  .appbar__download span { display: none; }
   .appbar__name { display: none; }
+  .appbar__changes { display: none; }
   .organize__btnlabel { display: none; }
 }
 
