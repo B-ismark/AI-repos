@@ -50,3 +50,26 @@ export function usePersistentState(key: string, fallback: unknown): unknown {
   }, [key, value, isObj]);
   return [value, setValue];
 }
+
+/** A boolean preference persisted as "1"/"0". */
+export function usePersistentFlag(
+  key: string,
+  fallback: boolean,
+): [boolean, React.Dispatch<React.SetStateAction<boolean>>] {
+  const [value, setValue] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw == null ? fallback : raw === "1";
+    } catch {
+      return fallback;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, value ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [key, value]);
+  return [value, setValue];
+}

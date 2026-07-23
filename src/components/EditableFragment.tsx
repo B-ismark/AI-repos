@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import { CSS_FONT } from "../pdf/style";
 import { elementTap } from "../hooks/useDrag";
+import { placeCaretEnd } from "../caret";
 import type { TextFragment, TextStyle } from "../pdf/types";
 
 interface Props {
@@ -21,8 +22,6 @@ interface Props {
   editing: boolean;
   /** Focus + place caret + scroll into view (e.g. mobile "Edit" pressed). */
   autoFocus: boolean;
-  /** Bumps on undo/redo so the editable text is re-seeded from state. */
-  revision: number;
   onSelect: (id: string) => void;
   /** Double-tap (touch) to enter edit mode on mobile. */
   onEdit?: (id: string) => void;
@@ -45,20 +44,24 @@ function EditableFragmentImpl({
   interactive,
   editing,
   autoFocus,
-  revision,
   onSelect,
   onEdit,
   onChangeText,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Seed on mount, and re-seed when an undo/redo changes the stored text.
+  // Keep the uncontrolled contentEditable in sync with external state changes
+  // (undo/redo, style reset, OCR, a freshly opened document). Writing only
+  // when the DOM's text actually differs from `value` means this is a no-op
+  // while the user types — React's re-render already matches what they typed,
+  // so the caret never jumps — but it re-seeds on any change that didn't come
+  // from typing here.
   useEffect(() => {
-    if (ref.current && ref.current.textContent !== value) {
-      ref.current.textContent = value;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision]);
+    const el = ref.current;
+    if (!el || el.textContent === value) return;
+    el.textContent = value;
+    if (document.activeElement === el) placeCaretEnd(el);
+  }, [value]);
 
   // Enter edit: focus, put the caret at the end, and scroll into view above
   // the keyboard.
@@ -66,15 +69,9 @@ function EditableFragmentImpl({
     if (!autoFocus || !ref.current) return;
     const el = ref.current;
     el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
+    placeCaretEnd(el);
     el.scrollIntoView({ block: "center", inline: "nearest" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFocus, revision]);
+  }, [autoFocus]);
 
   const [, , c, d, e, f] = fragment.transform;
   const show = modified || selected;

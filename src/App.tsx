@@ -16,7 +16,7 @@ import { useAutosave } from "./hooks/useAutosave";
 import type { PageNumberOptions, WatermarkOptions } from "./pdf/types";
 import { useHistory } from "./hooks/useHistory";
 import { useMediaQuery } from "./hooks/useMediaQuery";
-import { usePersistentState } from "./hooks/usePrefs";
+import { usePersistentState, usePersistentFlag } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
 import { loadPdf, looksLikePdf } from "./pdf/loader";
@@ -184,24 +184,15 @@ export function App() {
   );
   // Dim the (always-white) page canvas to cut glare, esp. in dark mode.
   // Preview-only — never affects the exported PDF.
-  const [dimPages, setDimPages] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("pref.dimPages") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("pref.dimPages", dimPages ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [dimPages]);
+  const [dimPages, setDimPages] = usePersistentFlag("pref.dimPages", false);
   const [sigOpen, setSigOpen] = useState(false);
   const [finishTab, setFinishTab] = useState<"numbers" | "watermark" | null>(null);
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  // Always-mounted picker for "Open another PDF" (the dropzone's own input only
+  // exists on the empty state), so the action opens a file dialog directly
+  // rather than first clearing to the empty screen.
+  const openInputRef = useRef<HTMLInputElement>(null);
   const [selection, setSelection] = useState<Selection>(null);
   // Mobile: the full properties sheet only opens on demand (via the selection
   // bar), and text elements only become editable in an explicit edit mode —
@@ -210,7 +201,6 @@ export function App() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   // When a long, cancellable operation is running (OCR), this holds its
@@ -239,7 +229,7 @@ export function App() {
 
   const vp = useViewport();
   const theme = useTheme();
-  const { restorable, save: saveSession, clear: clearAutosave, dismissRestore } = useAutosave();
+  const { restorable, save: saveSession, dismissRestore } = useAutosave();
   // >=600px gets the persistent side panel + tool rail (Material Medium+);
   // <600px is the compact phone layout (contextual selection bar + on-demand
   // sheet, `sheetOpen` state above).
@@ -394,7 +384,6 @@ export function App() {
         doc.reset(seedDoc ?? EMPTY_DOC);
         setSelection(null);
         setTool("select");
-        setRevision((r) => r + 1);
         vp.setPageWidth(Math.max(...loaded.pages.map((p) => p.viewBox.width), 1));
         vp.resetZoom();
         setStatus("ready");
@@ -585,7 +574,6 @@ export function App() {
         return { ...pg, fragments: [...kept, ...extra] };
       });
       setPdf({ ...pdf, pages });
-      setRevision((r) => r + 1);
       setStatus("ready");
       setMessage(
         added > 0
@@ -905,7 +893,6 @@ export function App() {
     if (!selection) return;
     setEditingId(selection.id);
     setAutoFocusId(selection.id);
-    setRevision((r) => r + 1);
   }, [selection]);
 
   /** Select a text element and immediately enter edit mode (double-tap on
@@ -916,7 +903,6 @@ export function App() {
     setSheetOpen(false);
     setEditingId(sel.id);
     setAutoFocusId(sel.id);
-    setRevision((r) => r + 1);
   }, []);
 
   // Deselecting also exits edit mode and closes the on-demand sheet.
@@ -1030,7 +1016,6 @@ export function App() {
       }));
     }
     setLastTextStyle(DEFAULT_STYLE);
-    setRevision((r) => r + 1);
   }, [selection, doc, setLastTextStyle]);
 
   const onChangeRedactionColor = useCallback(
@@ -1251,11 +1236,9 @@ export function App() {
 
   const undo = useCallback(() => {
     doc.undo();
-    setRevision((r) => r + 1);
   }, [doc]);
   const redo = useCallback(() => {
     doc.redo();
-    setRevision((r) => r + 1);
   }, [doc]);
 
   useEffect(() => {
@@ -1481,23 +1464,20 @@ export function App() {
     }
   }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues, pageNumbers, watermark, fileName]);
 
-  const doReset = useCallback(() => {
-    setPdf(null);
-    doc.reset(EMPTY_DOC);
-    setSelection(null);
-    setTool("select");
-    setStatus("idle");
-    setMessage("");
-    setMenuOpen(false);
+  // Open the OS file picker to load a different document in place of the
+  // current one (loading a new file replaces the working doc + autosave).
+  const openAnother = useCallback(() => {
     setConfirmReset(false);
-    clearAutosave();
-  }, [doc, clearAutosave]);
+    openInputRef.current?.click();
+  }, []);
 
   const reset = useCallback(() => {
     setMenuOpen(false);
+    // Loading a new file discards the current edits, so confirm first when
+    // there's unsaved work; otherwise go straight to the picker.
     if (changeCount > 0) setConfirmReset(true);
-    else doReset();
-  }, [changeCount, doReset]);
+    else openAnother();
+  }, [changeCount, openAnother]);
 
   const pickTool = (t: NavKey) => {
     setPendingStamp(null);
@@ -1767,7 +1747,6 @@ export function App() {
                 autoFocusId={autoFocusId}
                 editingId={editingId}
                 compact={compact}
-                revision={revision}
                 onSelect={onSelect}
                 onEditText={enterEdit}
                 onChangeFragmentText={onChangeFragmentText}
@@ -1986,13 +1965,25 @@ export function App() {
         }}
       />
 
+      <input
+        ref={openInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void openFile(f);
+          e.target.value = "";
+        }}
+      />
+
       {confirmReset && (
         <ConfirmDialog
           title="Open a different PDF?"
           message="This discards all your current changes."
           confirmLabel="Discard & open"
           danger
-          onConfirm={doReset}
+          onConfirm={openAnother}
           onCancel={() => setConfirmReset(false)}
         />
       )}
