@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageView, type AnnotSpec } from "./components/PageView";
+import { translateAnnotation } from "./components/AnnotationLayer";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { DrawToolbar } from "./components/DrawToolbar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -10,6 +11,7 @@ import { useHistory } from "./hooks/useHistory";
 import { usePersistentState } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
+import { useMediaQuery } from "./hooks/useMediaQuery";
 import { loadPdf } from "./pdf/loader";
 import { DEFAULT_STYLE, isFragmentModified, resolveFragmentStyle } from "./pdf/style";
 
@@ -45,6 +47,22 @@ type NavKey = Tool | "sign";
 
 const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [], annotations: [], stamps: [] };
 
+/** Turn a raw thrown error into plain-language guidance (audit #12). */
+function pdfOpenError(err: unknown): string {
+  const s = String(err).toLowerCase();
+  if (s.includes("password") || s.includes("encrypt"))
+    return "This PDF is password-protected or encrypted, so it can't be opened here.";
+  if (
+    s.includes("invalid") ||
+    s.includes("corrupt") ||
+    s.includes("structure") ||
+    s.includes("xref") ||
+    s.includes("not a pdf")
+  )
+    return "This file doesn't look like a valid PDF, or it may be damaged.";
+  return "Something went wrong opening this PDF. Try another file.";
+}
+
 const TOOLS: { key: NavKey; label: string; icon: string }[] = [
   { key: "select", label: "Select", icon: "arrow_selector_tool" },
   { key: "text", label: "Add text", icon: "text_fields" },
@@ -52,6 +70,35 @@ const TOOLS: { key: NavKey; label: string; icon: string }[] = [
   { key: "sign", label: "Sign", icon: "signature" },
   { key: "redact", label: "Redact", icon: "select" },
 ];
+
+// Single-key tool shortcuts (ignored while typing or when a modal is open).
+const TOOL_KEYS: Record<string, NavKey> = {
+  v: "select",
+  t: "text",
+  d: "draw",
+  s: "sign",
+  r: "redact",
+};
+const TOOL_SHORTCUT: Record<NavKey, string> = {
+  select: "V",
+  text: "T",
+  draw: "D",
+  sign: "S",
+  redact: "R",
+};
+
+/** True when focus is in a text-entry context, so single-key shortcuts and
+ * arrow-nudge must not hijack the keystroke. */
+function isTypingTarget(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return (
+    el.isContentEditable ||
+    el.tagName === "INPUT" ||
+    el.tagName === "TEXTAREA" ||
+    el.tagName === "SELECT"
+  );
+}
 
 export function App() {
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
@@ -73,6 +120,22 @@ export function App() {
     "pref.textStyle",
     DEFAULT_STYLE,
   );
+  // Dim the (always-white) page canvas to cut glare, esp. in dark mode.
+  // Preview-only — never affects the exported PDF.
+  const [dimPages, setDimPages] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pref.dimPages") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("pref.dimPages", dimPages ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [dimPages]);
   const [sigOpen, setSigOpen] = useState(false);
   const [finishTab, setFinishTab] = useState<"numbers" | "watermark" | null>(null);
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
@@ -87,11 +150,21 @@ export function App() {
   const [organizeOpen, setOrganizeOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const menuListRef = useRef<HTMLDivElement>(null);
   const counter = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${counter.current++}`;
 
   const vp = useViewport();
   const theme = useTheme();
+  // >=600px gets the persistent side panel + tool rail (Material Medium+).
+  const isWide = useMediaQuery("(min-width: 600px)");
+  // Stamps have no properties panel (edited directly on the canvas), so they
+  // don't drive the sheet/side panel.
+  const panelSelection = selection && selection.kind !== "stamp" ? selection : null;
+  // The mobile properties sheet covers the bottom of the screen; hide the
+  // floating zoom bar + FAB while it's open to declutter the thumb zone.
+  const sheetOpen = !isWide && !!panelSelection;
   const themeIcon =
     theme.mode === "light" ? "light_mode" : theme.mode === "dark" ? "dark_mode" : "system_mode";
   const themeLabel =
@@ -138,7 +211,7 @@ export function App() {
         setMessage(note ?? `${loaded.pages.length} page(s) · ${total} text fragments`);
       } catch (err) {
         setStatus("error");
-        setMessage(`Could not open PDF: ${String(err)}`);
+        setMessage(pdfOpenError(err));
       }
     },
     [doc, vp],
@@ -189,9 +262,9 @@ export function App() {
         const { addPageNumbers } = await import("./pdf/finishOps");
         const res = await addPageNumbers(baked, opts);
         await openBytes(toAB(res), fileName, "Page numbers added.");
-      } catch (err) {
+      } catch {
         setStatus("error");
-        setMessage(`Failed: ${String(err)}`);
+        setMessage("Couldn't add page numbers. Please try again.");
       }
     },
     [bakeCurrent, openBytes, fileName],
@@ -207,9 +280,9 @@ export function App() {
         const { addWatermark } = await import("./pdf/finishOps");
         const res = await addWatermark(baked, opts);
         await openBytes(toAB(res), fileName, "Watermark applied.");
-      } catch (err) {
+      } catch {
         setStatus("error");
-        setMessage(`Failed: ${String(err)}`);
+        setMessage("Couldn't apply the watermark. Please try again.");
       }
     },
     [bakeCurrent, openBytes, fileName],
@@ -235,9 +308,9 @@ export function App() {
       });
       setStatus("ready");
       setMessage(`Exported ${urls.length} image(s).`);
-    } catch (err) {
+    } catch {
       setStatus("error");
-      setMessage(`Failed: ${String(err)}`);
+      setMessage("Couldn't export images. Please try again.");
     }
   }, [pdf, bakeCurrent, fileName]);
 
@@ -538,6 +611,37 @@ export function App() {
     }
   }, [selection, doc]);
 
+  // Move focus into the overflow menu when it opens (ARIA menu pattern).
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuListRef.current
+      ?.querySelector<HTMLElement>('[role^="menuitem"]')
+      ?.focus();
+  }, [menuOpen]);
+
+  const onMenuKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const items = Array.from(
+      menuListRef.current?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]') ?? [],
+    );
+    if (items.length === 0) return;
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    const focusAt = (n: number) => {
+      e.preventDefault();
+      items[(n + items.length) % items.length].focus();
+    };
+    if (e.key === "ArrowDown") focusAt(idx + 1);
+    else if (e.key === "ArrowUp") focusAt(idx - 1);
+    else if (e.key === "Home") focusAt(0);
+    else if (e.key === "End") focusAt(items.length - 1);
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      setMenuOpen(false);
+      menuBtnRef.current?.focus();
+    } else if (e.key === "Tab") {
+      setMenuOpen(false);
+    }
+  }, []);
+
   const undo = useCallback(() => {
     doc.undo();
     setRevision((r) => r + 1);
@@ -558,6 +662,19 @@ export function App() {
       setSelection(null);
     }
   }, [textBoxes, redactions, annotations, stamps, selection]);
+
+  // Warn before leaving/reloading the tab while there are unsaved changes.
+  // Everything lives in memory (no server, no autosave), so an accidental
+  // refresh or back-navigation would otherwise silently discard all edits.
+  useEffect(() => {
+    if (changeCount === 0) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [changeCount]);
 
   // Auto-dismiss transient status messages (keep errors until superseded).
   useEffect(() => {
@@ -580,12 +697,21 @@ export function App() {
         redo();
         return;
       }
+      // Escape clears the current selection (and closes the mobile sheet /
+      // desktop panel, which is driven by selection). Modals stop Escape from
+      // reaching here via their own capture-phase handler.
+      if (e.key === "Escape" && selection) {
+        e.preventDefault();
+        setSelection(null);
+        return;
+      }
       if (
         (selection?.kind === "redaction" || selection?.kind === "stamp") &&
         (e.key === "Delete" || e.key === "Backspace")
       ) {
         e.preventDefault();
         onDelete();
+        return;
       }
       // Delete a selected annotation (but not while editing a sticky note).
       if (
@@ -595,11 +721,87 @@ export function App() {
       ) {
         e.preventDefault();
         onDelete();
+        return;
+      }
+
+      // Arrow-key nudge for a selected non-text element. Text boxes/notes keep
+      // their native caret movement, so they're intentionally excluded.
+      // Shift = a larger step. PDF's y-axis points up.
+      const arrow =
+        e.key === "ArrowLeft" ? ([-1, 0] as const)
+        : e.key === "ArrowRight" ? ([1, 0] as const)
+        : e.key === "ArrowUp" ? ([0, 1] as const)
+        : e.key === "ArrowDown" ? ([0, -1] as const)
+        : null;
+      if (arrow && selection && !mod && !isTypingTarget()) {
+        const step = e.shiftKey ? 10 : 1;
+        const dx = arrow[0] * step;
+        const dy = arrow[1] * step;
+        if (selection.kind === "redaction") {
+          const r = redactions.find((x) => x.id === selection.id);
+          if (r) {
+            e.preventDefault();
+            onChangeRedaction(r.id, { x: r.x + dx, y: r.y + dy }, `nudge-rd-${r.id}`);
+          }
+          return;
+        }
+        if (selection.kind === "stamp") {
+          const s = stamps.find((x) => x.id === selection.id);
+          if (s) {
+            e.preventDefault();
+            onChangeStamp(s.id, { x: s.x + dx, y: s.y + dy }, `nudge-st-${s.id}`);
+          }
+          return;
+        }
+        if (
+          selection.kind === "annotation" &&
+          selectedAnnotation &&
+          selectedAnnotation.kind !== "note"
+        ) {
+          e.preventDefault();
+          onMoveAnnotation(
+            translateAnnotation(selectedAnnotation, dx, dy),
+            `nudge-an-${selectedAnnotation.id}`,
+          );
+          return;
+        }
+      }
+
+      // Single-key tool shortcuts — only when not typing and no modal is open.
+      if (
+        !mod &&
+        !e.shiftKey &&
+        !isTypingTarget() &&
+        !document.querySelector('[aria-modal="true"]')
+      ) {
+        const t = TOOL_KEYS[key];
+        if (t) {
+          e.preventDefault();
+          setPendingStamp(null);
+          if (t === "sign") {
+            setSelection(null);
+            setSigOpen(true);
+          } else {
+            setTool(t);
+            if (t !== "select") setSelection(null);
+          }
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection, selectedAnnotation, onDelete, undo, redo]);
+  }, [
+    selection,
+    selectedAnnotation,
+    onDelete,
+    undo,
+    redo,
+    redactions,
+    stamps,
+    onChangeRedaction,
+    onChangeStamp,
+    onMoveAnnotation,
+  ]);
 
   const download = useCallback(async () => {
     if (!pdf) return;
@@ -621,9 +823,9 @@ export function App() {
           ? "Downloaded — redacted pages were flattened to images."
           : "Downloaded edited PDF.",
       );
-    } catch (err) {
+    } catch {
       setStatus("error");
-      setMessage(`Export failed: ${String(err)}`);
+      setMessage("Couldn't build the edited PDF. Please try again.");
     }
   }, [pdf, edits, textBoxes, redactions, annotations, stamps, fileName]);
 
@@ -681,13 +883,13 @@ export function App() {
             <span>{status === "exporting" ? "Exporting…" : "Download"}</span>
           </button>
           <div className="menu">
-            <button className="icon-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="More" aria-expanded={menuOpen} data-tip="More actions">
+            <button ref={menuBtnRef} className="icon-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="More actions" aria-haspopup="menu" aria-expanded={menuOpen} data-tip="More actions">
               <Icon name="more_vert" size={18} />
             </button>
             {menuOpen && (
               <>
                 <div className="menu__scrim" onClick={() => setMenuOpen(false)} />
-                <div className="menu__list" role="menu">
+                <div className="menu__list" role="menu" ref={menuListRef} onKeyDown={onMenuKeyDown}>
                   <button
                     className="menu__item"
                     onClick={() => {
@@ -728,6 +930,16 @@ export function App() {
                     <Icon name="image" size={18} /> Export as images
                   </button>
                   <div className="menu__divider" />
+                  <button
+                    className="menu__item"
+                    onClick={() => setDimPages((v) => !v)}
+                    role="menuitemcheckbox"
+                    aria-checked={dimPages}
+                  >
+                    <Icon name="contrast" size={18} /> Dim pages
+                    {dimPages && <Icon name="check" size={16} className="menu__check" />}
+                  </button>
+                  <div className="menu__divider" />
                   <button className="menu__item" onClick={reset} role="menuitem">
                     <Icon name="note_add" size={18} /> Open another PDF
                   </button>
@@ -746,6 +958,21 @@ export function App() {
         <Icon name={themeIcon} size={20} />
       </button>
     </header>
+  );
+
+  const propertiesPanel = (
+    <PropertiesPanel
+      selection={panelSelection}
+      style={activeStyle}
+      redactionColor={redactionColor}
+      annotation={selectedAnnotation}
+      onChangeStyle={onChangeStyle}
+      onChangeRedactionColor={onChangeRedactionColor}
+      onChangeAnnotation={onChangeAnnotation}
+      onDelete={onDelete}
+      onReset={onResetStyle}
+      onClose={() => setSelection(null)}
+    />
   );
 
   if (!pdf) {
@@ -800,7 +1027,7 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${dimPages ? " app--dim" : ""}`}>
       <TooltipHost />
       {appBar}
 
@@ -812,6 +1039,7 @@ export function App() {
               className={`toolnav__btn${tool === t.key ? " toolnav__btn--on" : ""}`}
               onClick={() => pickTool(t.key)}
               aria-pressed={tool === t.key}
+              data-tip={`${t.label} · ${TOOL_SHORTCUT[t.key]}`}
             >
               <span className="toolnav__ind">
                 <Icon name={t.icon} size={21} filled={tool === t.key} />
@@ -864,7 +1092,9 @@ export function App() {
             </div>
           </div>
 
-          {/* Pinned zoom control (bottom-right, does not scroll) */}
+          {/* Pinned zoom control (bottom-right, does not scroll) — hidden
+              while the mobile properties sheet covers the bottom. */}
+          {!sheetOpen && (
           <div className="zoombar" role="group" aria-label="Zoom">
             <button className="icon-btn" onClick={vp.zoomOut} aria-label="Zoom out" data-tip="Zoom out">
               <Icon name="remove" size={18} />
@@ -876,6 +1106,7 @@ export function App() {
               <Icon name="add" size={18} />
             </button>
           </div>
+          )}
 
           {tool === "draw" && (
             <DrawToolbar
@@ -887,45 +1118,53 @@ export function App() {
           )}
         </div>
 
-        {/* Stamps (signatures/images) are manipulated directly on the canvas —
-            no properties sheet, so it never covers the element being dragged. */}
-        {selection && selection.kind !== "stamp" && (
-          <>
-            {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
-            <div className="scrim" onPointerDown={() => setSelection(null)} />
-            <aside className="panel">
-              <PropertiesPanel
-                selection={selection}
-                style={activeStyle}
-                redactionColor={redactionColor}
-                annotation={selectedAnnotation}
-                onChangeStyle={onChangeStyle}
-                onChangeRedactionColor={onChangeRedactionColor}
-                onChangeAnnotation={onChangeAnnotation}
-                onDelete={onDelete}
-                onReset={onResetStyle}
-                onClose={() => setSelection(null)}
-              />
-            </aside>
-          </>
+        {/* Stamps (signatures/images) are manipulated directly on the canvas,
+            so they have no properties panel. On wide screens the panel is
+            persistent (empty state when nothing applicable is selected) so the
+            layout doesn't shift; on phones it's a bottom sheet shown only when
+            there's something to edit. */}
+        {isWide ? (
+          <aside className="panel">{propertiesPanel}</aside>
+        ) : (
+          panelSelection && (
+            <>
+              {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
+              <div className="scrim" onPointerDown={() => setSelection(null)} />
+              <aside className="panel">{propertiesPanel}</aside>
+            </>
+          )
         )}
       </div>
 
-      {/* Mobile primary action */}
-      <button
-        className="fab"
-        onClick={download}
-        disabled={status === "exporting"}
-        aria-label="Download PDF"
-      >
-        <Icon name={status === "exporting" ? "hourglass_top" : "download"} size={20} />
-        <span className="fab__label label-large">
-          {status === "exporting" ? "Exporting…" : "Download"}
-        </span>
-      </button>
+      {/* Mobile primary action (hidden while the properties sheet is open) */}
+      {!sheetOpen && (
+        <button
+          className="fab"
+          onClick={download}
+          disabled={status === "exporting"}
+          aria-label="Download PDF"
+        >
+          <Icon name={status === "exporting" ? "hourglass_top" : "download"} size={20} />
+          <span className="fab__label label-large">
+            {status === "exporting" ? "Exporting…" : "Download"}
+          </span>
+        </button>
+      )}
 
+      {/* Persistent, visually-hidden live regions guarantee the status is
+          announced by assistive tech even though the visible snackbar mounts
+          and unmounts. Errors are assertive; everything else is polite. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {status === "error" ? "" : message}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
+        {status === "error" ? message : ""}
+      </div>
       {message && (
-        <div className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}>
+        <div
+          className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}
+          aria-hidden="true"
+        >
           {message}
         </div>
       )}

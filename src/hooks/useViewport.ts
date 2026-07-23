@@ -10,6 +10,10 @@ import { dragState } from "./useDrag";
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 6;
 const PAD = 24; // px of breathing room around the page at fit-width
+// On Expanded (>=840dp) windows, cap the fit-to-width page column so a single
+// page doesn't balloon to an awkward size on a wide monitor; the extra room
+// becomes centred margin instead. (audit #9 / M-2)
+const MAX_FIT_WIDTH = 1100;
 
 /**
  * Viewport zoom controller (research "Model B": native scroll + app-managed
@@ -37,8 +41,9 @@ export function useViewport() {
   const [pageWidthPts, setPageWidthPts] = useState(0);
   const [zoom, setZoom] = useState(1);
 
+  const effectiveWidth = Math.min(fitWidth, MAX_FIT_WIDTH);
   const fitScale =
-    pageWidthPts > 0 && fitWidth > 0 ? (fitWidth - PAD * 2) / pageWidthPts : 1;
+    pageWidthPts > 0 && fitWidth > 0 ? (effectiveWidth - PAD * 2) / pageWidthPts : 1;
   const scale = Math.max(0.05, fitScale * zoom);
 
   // The fit-to-width base is measured only when the scroll surface first
@@ -113,8 +118,47 @@ export function useViewport() {
     null,
   );
 
+  // --- Inertial momentum for one-finger panning (native-feeling flick) ---
+  // Velocity is tracked in CSS px/ms during a pan; on release the scroll
+  // continues with exponential friction until it falls below a threshold.
+  const velocity = useRef({ x: 0, y: 0 });
+  const lastPan = useRef<number | null>(null);
+  const momentumRaf = useRef<number | null>(null);
+
+  const stopMomentum = useCallback(() => {
+    if (momentumRaf.current != null) {
+      cancelAnimationFrame(momentumRaf.current);
+      momentumRaf.current = null;
+    }
+  }, []);
+
+  const startMomentum = useCallback(() => {
+    stopMomentum();
+    let vx = velocity.current.x;
+    let vy = velocity.current.y;
+    const step = () => {
+      vx *= 0.94;
+      vy *= 0.94;
+      const node = elRef.current;
+      if (!node || dragState.active || Math.hypot(vx, vy) < 0.02) {
+        momentumRaf.current = null;
+        return;
+      }
+      node.scrollLeft -= vx * 16;
+      node.scrollTop -= vy * 16;
+      momentumRaf.current = requestAnimationFrame(step);
+    };
+    momentumRaf.current = requestAnimationFrame(step);
+  }, [stopMomentum]);
+
+  useEffect(() => stopMomentum, [stopMomentum]);
+
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.pointerType !== "touch") return;
+    // A new touch interrupts any in-flight momentum glide.
+    stopMomentum();
+    velocity.current = { x: 0, y: 0 };
+    lastPan.current = null;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.current.size === 1) {
       tap.current = { x: e.clientX, y: e.clientY, t: performance.now(), moved: false };
@@ -128,7 +172,7 @@ export function useViewport() {
         zoom,
       };
     }
-  }, [zoom]);
+  }, [zoom, stopMomentum]);
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -144,8 +188,20 @@ export function useViewport() {
         // One-finger pan (touch-action:none means we scroll the viewport).
         const node = elRef.current;
         if (node) {
-          node.scrollLeft -= e.clientX - prev.x;
-          node.scrollTop -= e.clientY - prev.y;
+          const dx = e.clientX - prev.x;
+          const dy = e.clientY - prev.y;
+          node.scrollLeft -= dx;
+          node.scrollTop -= dy;
+          // Track velocity (px/ms) for the release-time momentum glide.
+          const now = performance.now();
+          if (lastPan.current != null) {
+            const dt = Math.max(1, now - lastPan.current);
+            velocity.current = {
+              x: 0.8 * (dx / dt) + 0.2 * velocity.current.x,
+              y: 0.8 * (dy / dt) + 0.2 * velocity.current.y,
+            };
+          }
+          lastPan.current = now;
         }
       }
       if (pointers.current.size === 2 && pinchStart.current) {
@@ -182,9 +238,15 @@ export function useViewport() {
           }
         }
       }
+      // A one-finger pan just ended → glide with the tracked velocity.
+      if (pointers.current.size === 0 && tap.current?.moved) {
+        const v = velocity.current;
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (!reduce && Math.hypot(v.x, v.y) > 0.05) startMomentum();
+      }
       tap.current = null;
     },
-    [zoom, zoomBy],
+    [zoom, zoomBy, startMomentum],
   );
 
   // Ctrl/⌘ + wheel = zoom the document (and stop the browser page-zoom).

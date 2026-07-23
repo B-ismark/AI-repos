@@ -17,6 +17,32 @@ body {
   overscroll-behavior: none;
 }
 
+/* ============ Keyboard focus (WCAG 2.4.7) ============
+   A single, visible focus ring for every keyboard-focusable control. Only
+   shows for keyboard/AT focus (:focus-visible), never on pointer clicks, so
+   it doesn't add visual noise for mouse/touch users. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* Controls that live inside a clipping container (overflow:hidden/auto) use an
+   inset ring so the outline is never cropped by the parent. */
+.segmented__btn:focus-visible,
+.drawbar .icon-btn:focus-visible,
+.menu__item:focus-visible {
+  outline-offset: -2px;
+}
+/* On-page editable overlays sit on white paper — a solid ring reads clearly. */
+.fragment:focus-visible,
+.textbox:focus-visible,
+.note:focus-visible {
+  outline-offset: 1px;
+}
+/* Remove the UA default only where our own ring replaces it. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -29,8 +55,9 @@ body {
   position: relative;
   display: inline-grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  /* 48px hit area — meets Material 48dp and Apple 44pt minimums. */
+  width: 48px;
+  height: 48px;
   flex: none;
   border: none;
   border-radius: var(--radius-full);
@@ -58,7 +85,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  height: 38px;
+  height: 44px;
   padding: 0 18px;
   border: none;
   border-radius: var(--radius-full);
@@ -203,6 +230,20 @@ body {
   min-height: 100%;
 }
 
+/* Visually-hidden but announced by assistive tech (for live regions). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ============ Page ============ */
 .page {
   position: relative;
@@ -210,6 +251,28 @@ body {
   box-shadow: var(--shadow-2);
   border-radius: var(--radius-sm);
   flex: none;
+}
+/* Shimmer placeholder shown until a page first rasterises (Doherty: keep the
+   wait legible instead of a blank white rectangle). */
+.page__skeleton {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    100deg,
+    var(--surface-container-low) 30%,
+    var(--surface-container-high) 50%,
+    var(--surface-container-low) 70%
+  );
+  background-size: 200% 100%;
+  animation: page-shimmer 1.2s var(--ease-standard) infinite;
+}
+@keyframes page-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page__skeleton { animation: none; }
 }
 .page__canvas { display: block; width: 100%; height: 100%; border-radius: inherit; }
 .page__overlay { position: absolute; inset: 0; }
@@ -241,7 +304,7 @@ body {
 }
 .zoombar__label {
   min-width: 48px;
-  height: 36px;
+  height: 44px;
   border: none;
   background: transparent;
   color: var(--on-surface);
@@ -327,7 +390,7 @@ body {
 .chip-row { display: flex; gap: 8px; }
 .chip {
   min-width: 48px;
-  height: 40px;
+  height: 44px;
   padding: 0 14px;
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
@@ -409,12 +472,21 @@ body {
 }
 .menu__item:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
 .menu__divider { height: 1px; background: var(--outline-variant); margin: 6px 4px; }
+.menu__check { margin-left: auto; color: var(--primary); }
+
+/* "Dim pages" preview mode: soften the always-white page canvas to cut glare
+   (esp. in dark mode). Preview only — the exported PDF is unaffected. */
+.app--dim .page__canvas,
+.app--dim .thumb__canvas {
+  filter: brightness(0.8);
+  transition: filter var(--dur-short4) var(--ease-standard);
+}
 
 /* Finishing dialog form controls */
 .dialog__body--form { display: block; align-items: stretch; }
 .posgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 150px; }
 .posgrid__cell {
-  height: 30px;
+  height: 44px;
   border: 1px solid var(--outline);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -668,8 +740,8 @@ body {
   box-shadow: inset 0 0 0 2px var(--surface-container-low);
 }
 .colorfield__swatch--sm {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-full);
 }
 .colorfield__pop {
@@ -831,10 +903,10 @@ body {
 .sigsaved__use:hover { border-color: var(--primary); }
 .sigsaved__del {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 22px;
-  height: 22px;
+  top: -8px;
+  right: -8px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -1007,7 +1079,8 @@ body {
     flex-direction: column;
     justify-content: flex-start;
     gap: 4px;
-    width: 66px;
+    /* Material navigation rail is 80dp wide. */
+    width: 80px;
     padding: 10px 6px;
     border-top: none;
     border-right: 1px solid var(--outline-variant);
@@ -1045,4 +1118,15 @@ body {
   .appbar__download { display: none; }
   .appbar__name { display: none; }
   .organize__btnlabel { display: none; }
+}
+
+/* ============ Expanded window (>=840px): roomier side panel + page column.
+   Material's Expanded size class; pairs with the fit-to-width cap in
+   useViewport so a single page doesn't balloon on wide monitors. ============ */
+@media (min-width: 840px) {
+  .panel { width: 320px; }
+  .doc { gap: 24px; padding: 24px; }
+  .organize__grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
 }

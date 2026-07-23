@@ -60,6 +60,23 @@ and is **mobile- and tablet-first**:
 
 Everything runs locally with the [File API]; the PDF never leaves your machine.
 
+## Accessibility & keyboard
+
+- **Visible focus** — every control shows a clear focus ring for keyboard and
+  assistive-tech users; **48px touch targets** on primary controls.
+- **Keyboard** — single-key tool shortcuts (**V** select, **T** text, **D**
+  draw, **S** sign, **R** redact), <kbd>Esc</kbd> to clear the selection or
+  close a dialog, arrow keys to nudge a selected redaction/stamp/annotation
+  (<kbd>Shift</kbd> for a larger step), and full undo/redo shortcuts.
+- **Dialogs** trap focus, close on <kbd>Esc</kbd>, restore focus on close, and
+  dismiss with the platform **Back** gesture/button (Android/iOS/browser).
+- **Status is announced** via ARIA live regions; page loads show a skeleton.
+- **Zoom is never blocked** — browser/OS zoom and Dynamic Type stay available —
+  and motion honors `prefers-reduced-motion`.
+- **Unsaved-work guard** warns before you close or reload with pending edits.
+- **Dim pages** (overflow menu) softens the white page canvas to cut glare in
+  dark mode; preview only, never baked into the export.
+
 ## How it works
 
 1. **Render** — [PDF.js] rasterises each page to a `<canvas>` and extracts the

@@ -93,6 +93,9 @@ function TextBoxItemImpl({
         suppressContentEditableWarning
         spellCheck={false}
         data-placeholder="Type…"
+        role={interactive ? "textbox" : undefined}
+        aria-multiline="false"
+        aria-label="Text box"
         style={{
           fontSize: `${fontPx}px`,
           fontFamily: CSS_FONT[box.style.font],
@@ -110,10 +113,16 @@ function TextBoxItemImpl({
       />
       {selected && interactive && (
         <>
-          <div className="tb-move" title="Drag to move" onPointerDown={beginMove} />
+          <div
+            className="tb-move"
+            data-tip="Drag to move"
+            aria-label="Drag to move text box"
+            onPointerDown={beginMove}
+          />
           <div
             className="handle tb-resize"
-            title="Drag to resize"
+            data-tip="Drag to resize"
+            aria-label="Drag to resize text box"
             onPointerDown={beginResize}
           />
         </>

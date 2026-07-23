@@ -1,7 +1,9 @@
 import {
   ArrowUpRight,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Contrast,
   Download,
   Droplets,
   FilePlus,
@@ -68,6 +70,8 @@ const MAP: Record<string, LucideIcon> = {
   remove: Minus,
   chevron_left: ChevronLeft,
   chevron_right: ChevronRight,
+  check: Check,
+  contrast: Contrast,
   rotate: RotateCw,
   hourglass_top: Hourglass,
   light_mode: Sun,
