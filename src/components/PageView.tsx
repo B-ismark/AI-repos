@@ -78,6 +78,7 @@ export function PageView(props: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [painted, setPainted] = useState(false);
   const [g, setG] = useState<Gesture | null>(null);
 
   useEffect(() => {
@@ -85,9 +86,16 @@ export function PageView(props: Props) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const timer = setTimeout(() => {
-      renderPage(bytes, page.pageIndex, canvas, scale).catch((err) => {
-        if (!cancelled) setError(String(err));
-      });
+      renderPage(bytes, page.pageIndex, canvas, scale)
+        .then(() => {
+          if (!cancelled) {
+            setPainted(true);
+            setError(null);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) setError(String(err));
+        });
     }, 90);
     return () => {
       cancelled = true;
@@ -183,8 +191,9 @@ export function PageView(props: Props) {
   const notes = annotations.filter((a) => a.kind === "note") as Extract<Annotation, { kind: "note" }>[];
 
   return (
-    <div className="page" style={{ width: W, height: Hpx }}>
+    <div className="page" style={{ width: W, height: Hpx }} aria-busy={!painted && !error}>
       <canvas ref={canvasRef} className="page__canvas" />
+      {!painted && !error && <div className="page__skeleton" aria-hidden="true" />}
       {error ? (
         <div className="page__error">Failed to render page: {error}</div>
       ) : (

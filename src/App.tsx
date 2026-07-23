@@ -43,6 +43,22 @@ type NavKey = Tool | "sign";
 
 const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [], annotations: [], stamps: [] };
 
+/** Turn a raw thrown error into plain-language guidance (audit #12). */
+function pdfOpenError(err: unknown): string {
+  const s = String(err).toLowerCase();
+  if (s.includes("password") || s.includes("encrypt"))
+    return "This PDF is password-protected or encrypted, so it can't be opened here.";
+  if (
+    s.includes("invalid") ||
+    s.includes("corrupt") ||
+    s.includes("structure") ||
+    s.includes("xref") ||
+    s.includes("not a pdf")
+  )
+    return "This file doesn't look like a valid PDF, or it may be damaged.";
+  return "Something went wrong opening this PDF. Try another file.";
+}
+
 const TOOLS: { key: NavKey; label: string; icon: string }[] = [
   { key: "select", label: "Select", icon: "arrow_selector_tool" },
   { key: "text", label: "Add text", icon: "text_fields" },
@@ -167,7 +183,7 @@ export function App() {
         setMessage(note ?? `${loaded.pages.length} page(s) · ${total} text fragments`);
       } catch (err) {
         setStatus("error");
-        setMessage(`Could not open PDF: ${String(err)}`);
+        setMessage(pdfOpenError(err));
       }
     },
     [doc, vp],
@@ -216,9 +232,9 @@ export function App() {
         const baked = await bakeCurrent();
         const res = await addPageNumbers(baked, opts);
         await openBytes(toAB(res), fileName, "Page numbers added.");
-      } catch (err) {
+      } catch {
         setStatus("error");
-        setMessage(`Failed: ${String(err)}`);
+        setMessage("Couldn't add page numbers. Please try again.");
       }
     },
     [bakeCurrent, openBytes, fileName],
@@ -233,9 +249,9 @@ export function App() {
         const baked = await bakeCurrent();
         const res = await addWatermark(baked, opts);
         await openBytes(toAB(res), fileName, "Watermark applied.");
-      } catch (err) {
+      } catch {
         setStatus("error");
-        setMessage(`Failed: ${String(err)}`);
+        setMessage("Couldn't apply the watermark. Please try again.");
       }
     },
     [bakeCurrent, openBytes, fileName],
@@ -260,9 +276,9 @@ export function App() {
       });
       setStatus("ready");
       setMessage(`Exported ${urls.length} image(s).`);
-    } catch (err) {
+    } catch {
       setStatus("error");
-      setMessage(`Failed: ${String(err)}`);
+      setMessage("Couldn't export images. Please try again.");
     }
   }, [pdf, bakeCurrent, fileName]);
 
@@ -762,9 +778,9 @@ export function App() {
           ? "Downloaded — redacted pages were flattened to images."
           : "Downloaded edited PDF.",
       );
-    } catch (err) {
+    } catch {
       setStatus("error");
-      setMessage(`Export failed: ${String(err)}`);
+      setMessage("Couldn't build the edited PDF. Please try again.");
     }
   }, [pdf, edits, textBoxes, redactions, annotations, stamps, fileName]);
 
@@ -1063,8 +1079,20 @@ export function App() {
         </span>
       </button>
 
+      {/* Persistent, visually-hidden live regions guarantee the status is
+          announced by assistive tech even though the visible snackbar mounts
+          and unmounts. Errors are assertive; everything else is polite. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {status === "error" ? "" : message}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
+        {status === "error" ? message : ""}
+      </div>
       {message && (
-        <div className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}>
+        <div
+          className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}
+          aria-hidden="true"
+        >
           {message}
         </div>
       )}
