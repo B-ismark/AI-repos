@@ -16,6 +16,23 @@ interface Props {
   onChangeText: (id: string, text: string) => void;
 }
 
+/** Pick black or white text for legibility on a given note colour, from the
+ * sRGB relative luminance of the background (audit #18). */
+function readableText(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "#1a1a1a";
+  const n = parseInt(m[1], 16);
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const L =
+    0.2126 * lin((n >> 16) & 255) +
+    0.7152 * lin((n >> 8) & 255) +
+    0.0722 * lin(n & 255);
+  return L > 0.42 ? "#111111" : "#ffffff";
+}
+
 /** A sticky note: a small coloured, editable label pinned to the page. */
 function NoteItemImpl({
   id,
@@ -64,6 +81,7 @@ function NoteItemImpl({
         left: `${x * scale}px`,
         top: `${(pageHeight - y) * scale}px`,
         background: color,
+        color: readableText(color),
         pointerEvents: interactive ? "auto" : "none",
       }}
       onPointerDown={() => interactive && onSelect(id)}

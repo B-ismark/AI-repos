@@ -117,6 +117,22 @@ export function App() {
     "pref.textStyle",
     DEFAULT_STYLE,
   );
+  // Dim the (always-white) page canvas to cut glare, esp. in dark mode.
+  // Preview-only — never affects the exported PDF.
+  const [dimPages, setDimPages] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pref.dimPages") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("pref.dimPages", dimPages ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [dimPages]);
   const [sigOpen, setSigOpen] = useState(false);
   const [finishTab, setFinishTab] = useState<"numbers" | "watermark" | null>(null);
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
@@ -577,13 +593,13 @@ export function App() {
   useEffect(() => {
     if (!menuOpen) return;
     menuListRef.current
-      ?.querySelector<HTMLElement>('[role="menuitem"]')
+      ?.querySelector<HTMLElement>('[role^="menuitem"]')
       ?.focus();
   }, [menuOpen]);
 
   const onMenuKeyDown = useCallback((e: React.KeyboardEvent) => {
     const items = Array.from(
-      menuListRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
+      menuListRef.current?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]') ?? [],
     );
     if (items.length === 0) return;
     const idx = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -891,6 +907,16 @@ export function App() {
                     <Icon name="image" size={18} /> Export as images
                   </button>
                   <div className="menu__divider" />
+                  <button
+                    className="menu__item"
+                    onClick={() => setDimPages((v) => !v)}
+                    role="menuitemcheckbox"
+                    aria-checked={dimPages}
+                  >
+                    <Icon name="contrast" size={18} /> Dim pages
+                    {dimPages && <Icon name="check" size={16} className="menu__check" />}
+                  </button>
+                  <div className="menu__divider" />
                   <button className="menu__item" onClick={reset} role="menuitem">
                     <Icon name="note_add" size={18} /> Open another PDF
                   </button>
@@ -978,7 +1004,7 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${dimPages ? " app--dim" : ""}`}>
       <TooltipHost />
       {appBar}
 

@@ -472,6 +472,15 @@ body {
 }
 .menu__item:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
 .menu__divider { height: 1px; background: var(--outline-variant); margin: 6px 4px; }
+.menu__check { margin-left: auto; color: var(--primary); }
+
+/* "Dim pages" preview mode: soften the always-white page canvas to cut glare
+   (esp. in dark mode). Preview only — the exported PDF is unaffected. */
+.app--dim .page__canvas,
+.app--dim .thumb__canvas {
+  filter: brightness(0.8);
+  transition: filter var(--dur-short4) var(--ease-standard);
+}
 
 /* Finishing dialog form controls */
 .dialog__body--form { display: block; align-items: stretch; }
