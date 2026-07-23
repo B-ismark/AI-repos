@@ -540,6 +540,19 @@ export function App() {
     }
   }, [textBoxes, redactions, annotations, stamps, selection]);
 
+  // Warn before leaving/reloading the tab while there are unsaved changes.
+  // Everything lives in memory (no server, no autosave), so an accidental
+  // refresh or back-navigation would otherwise silently discard all edits.
+  useEffect(() => {
+    if (changeCount === 0) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [changeCount]);
+
   // Auto-dismiss transient status messages (keep errors until superseded).
   useEffect(() => {
     if (!message || status === "error" || status === "loading" || status === "exporting") return;

@@ -2,9 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      No maximum-scale / user-scalable lock: browser + OS zoom (and Dynamic
+      Type / font scaling) must stay available for low-vision users. The
+      canvas owns its own gestures only where it needs to, via a scoped
+      `touch-action` on the scroll surface — not a global zoom lock.
+    -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="theme-color" content="#6750a4" />
     <title>PDF Text Editor</title>

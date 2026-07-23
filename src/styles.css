@@ -17,6 +17,32 @@ body {
   overscroll-behavior: none;
 }
 
+/* ============ Keyboard focus (WCAG 2.4.7) ============
+   A single, visible focus ring for every keyboard-focusable control. Only
+   shows for keyboard/AT focus (:focus-visible), never on pointer clicks, so
+   it doesn't add visual noise for mouse/touch users. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* Controls that live inside a clipping container (overflow:hidden/auto) use an
+   inset ring so the outline is never cropped by the parent. */
+.segmented__btn:focus-visible,
+.drawbar .icon-btn:focus-visible,
+.menu__item:focus-visible {
+  outline-offset: -2px;
+}
+/* On-page editable overlays sit on white paper — a solid ring reads clearly. */
+.fragment:focus-visible,
+.textbox:focus-visible,
+.note:focus-visible {
+  outline-offset: 1px;
+}
+/* Remove the UA default only where our own ring replaces it. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 .app {
   display: flex;
   flex-direction: column;
