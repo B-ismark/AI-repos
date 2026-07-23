@@ -320,6 +320,10 @@ body {
   inset: 0;
   background: color-mix(in srgb, var(--scrim) 32%, transparent);
   z-index: 25;
+  /* Purely a visual dim: the sheet is non-modal so the selected element's
+   * on-canvas handles (resize/rotate/move) stay reachable underneath. Dismiss
+   * via an empty-canvas tap, the sheet's Close button, Escape, or reselect. */
+  pointer-events: none;
 }
 .panel {
   position: fixed;
@@ -669,11 +673,61 @@ body {
   touch-action: none;
 }
 
+.handle { pointer-events: auto; }
+
+/* Rotate ring: a transparent target just outside each corner. It sits below
+ * the resize handle, so the handle's centre resizes and the surrounding ring
+ * rotates — "hover close to the corner to rotate". */
+.rotate-zone {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-full);
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 1;
+}
+.rotate-zone:active { cursor: grabbing; }
+
 /* Bigger touch targets on coarse pointers */
 @media (pointer: coarse) {
   .handle { width: 20px; height: 20px; }
+  .rotate-zone { width: 46px; height: 46px; }
   .tb-move { width: 32px; height: 20px; top: -22px; }
   .tb-move::after { line-height: 20px; font-size: 13px; }
+}
+
+/* Transparent frame that carries the resize/rotate handles for a selected
+ * rect/highlight box. The body is click-through; only the handles capture. */
+.annot-frame {
+  position: absolute;
+  pointer-events: none;
+  transform-origin: center;
+  z-index: 4;
+}
+.annot-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  outline: 1.5px dashed var(--primary);
+  outline-offset: 1px;
+}
+
+/* Line/arrow endpoint handles (drawn in the SVG layer). */
+.endpoint {
+  fill: var(--surface-container-lowest);
+  stroke: var(--primary);
+  stroke-width: 2;
+  cursor: grab;
+  pointer-events: auto;
+}
+.endpoint:active { cursor: grabbing; }
+.endpoint-hit {
+  fill: transparent;
+  cursor: grab;
+  pointer-events: auto;
 }
 
 /* ============ Annotations ============ */

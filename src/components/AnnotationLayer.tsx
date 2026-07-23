@@ -1,4 +1,5 @@
-import { startElementGesture } from "../hooks/useDrag";
+import { useRef } from "react";
+import { startElementGesture, startPointerDrag } from "../hooks/useDrag";
 import type { Annotation } from "../pdf/types";
 
 interface Props {
@@ -46,7 +47,9 @@ function bbox(a: Annotation, scale: number, H: number) {
 }
 
 /** SVG layer that renders vector annotations for one page. Visible shapes are
- * inert; transparent "hit" shapes (only in select mode) handle selection. */
+ * inert; transparent "hit" shapes (only in select mode) handle selection.
+ * Selected lines/arrows get draggable endpoint handles; rect/highlight boxes
+ * are resized/rotated by an HTML SelectionFrame rendered alongside (PageView).*/
 export function AnnotationLayer({
   annotations,
   scale,
@@ -58,16 +61,32 @@ export function AnnotationLayer({
 }: Props) {
   const toX = (x: number) => x * scale;
   const toY = (y: number) => (H - y) * scale;
+  const gestureRef = useRef(0);
   // Select on press and drag to move. Cumulative delta is applied to the
   // annotation snapshotted at drag start (screen-down = PDF-y-down = negative).
-  let gesture = 0;
   const beginDrag = (a: Annotation, e: React.PointerEvent) => {
-    const key = `move-an-${a.id}-${++gesture}`;
+    const key = `move-an-${a.id}-${++gestureRef.current}`;
     const start = a;
     startElementGesture(e, {
       selected: selectedId === a.id,
       onSelect: () => onSelect(a.id),
       onMove: (dx, dy) => onMove(translateAnnotation(start, dx / scale, -dy / scale), key),
+    });
+  };
+  // Drag one end of a line/arrow: it pivots and scales about the other end.
+  const beginEndpoint = (a: Extract<Annotation, { kind: "line" | "arrow" }>, which: 1 | 2, e: React.PointerEvent) => {
+    const key = `endpt-an-${a.id}-${which}-${++gestureRef.current}`;
+    const start = a;
+    startPointerDrag(e, {
+      onMove: (dx, dy) => {
+        const nx = dx / scale;
+        const ny = -dy / scale;
+        const next =
+          which === 1
+            ? { ...start, x1: start.x1 + nx, y1: start.y1 + ny }
+            : { ...start, x2: start.x2 + nx, y2: start.y2 + ny };
+        onMove(next, key);
+      },
     });
   };
   const hitProps = (a: Annotation) =>
@@ -91,6 +110,16 @@ export function AnnotationLayer({
         const stroke = "strokeWidth" in a ? a.strokeWidth * scale : 1;
         const key = a.id;
         const els: React.ReactNode[] = [];
+        // Box kinds carry an optional rotation about their centre.
+        let groupTransform: string | undefined;
+        if (a.kind === "highlight" || a.kind === "rect") {
+          const rot = a.rotation ?? 0;
+          if (rot) {
+            const cx = toX(a.x + a.width / 2);
+            const cy = toY(a.y + a.height / 2);
+            groupTransform = `rotate(${rot} ${cx} ${cy})`;
+          }
+        }
         if (a.kind === "highlight") {
           els.push(
             <rect key="v" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill={a.color} opacity={0.4} style={{ pointerEvents: "none" }} />,
@@ -117,6 +146,15 @@ export function AnnotationLayer({
               );
             }
           }
+          // Draggable endpoints when selected: reshape length & direction.
+          if (selectedId === a.id && interactive) {
+            for (const [k, cx, cy, w] of [["e1", x1, y1, 1] as const, ["e2", x2, y2, 2] as const]) {
+              els.push(
+                <circle key={`${k}hit`} className="endpoint-hit" cx={cx} cy={cy} r={14} onPointerDown={(e) => beginEndpoint(a, w, e)} />,
+                <circle key={k} className="endpoint" cx={cx} cy={cy} r={6} onPointerDown={(e) => beginEndpoint(a, w, e)} />,
+              );
+            }
+          }
         } else if (a.kind === "pen") {
           const pts = a.pts.map((p) => `${toX(p.x)},${toY(p.y)}`).join(" ");
           els.push(
@@ -124,9 +162,12 @@ export function AnnotationLayer({
             <polyline key="h" points={pts} fill="none" stroke="transparent" strokeWidth={Math.max(stroke, 16)} {...hitProps(a)} />,
           );
         }
-        const b = selectedId === a.id ? bbox(a, scale, H) : null;
+        // Dashed outline only for kinds without dedicated handles (pen/note);
+        // line/arrow show endpoints, rect/highlight get the HTML frame.
+        const showBox = selectedId === a.id && (a.kind === "pen" || a.kind === "note");
+        const b = showBox ? bbox(a, scale, H) : null;
         return (
-          <g key={key}>
+          <g key={key} transform={groupTransform}>
             {els}
             {b && (
               <rect x={b.x - 4} y={b.y - 4} width={b.w + 8} height={b.h + 8} fill="none" stroke="var(--primary)" strokeWidth={1.5} strokeDasharray="5 4" style={{ pointerEvents: "none" }} />

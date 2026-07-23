@@ -1128,8 +1128,10 @@ export function App() {
         ) : (
           panelSelection && (
             <>
-              {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
-              <div className="scrim" onPointerDown={() => setSelection(null)} />
+              {/* Mobile-only visual dim. Non-interactive (pointer-events:none)
+                  so the selected element's on-canvas handles stay reachable;
+                  dismiss via empty-canvas tap, the sheet Close button, or Esc. */}
+              <div className="scrim" aria-hidden="true" />
               <aside className="panel">{propertiesPanel}</aside>
             </>
           )
