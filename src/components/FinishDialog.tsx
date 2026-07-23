@@ -31,7 +31,7 @@ export function FinishDialog({ initialTab = "numbers", onApplyNumbers, onApplyWa
       <div className="dialog" onPointerDown={(e) => e.stopPropagation()}>
         <div className="dialog__head">
           <span className="title-large">Finishing touches</span>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={onClose} aria-label="Close" data-tip="Close">
             <Icon name="close" size={20} />
           </button>
         </div>

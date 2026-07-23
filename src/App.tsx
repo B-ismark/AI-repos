@@ -6,6 +6,7 @@ import { DrawToolbar } from "./components/DrawToolbar";
 import { SignatureDialog } from "./components/SignatureDialog";
 import { FinishDialog } from "./components/FinishDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { TooltipHost } from "./components/TooltipHost";
 import { Icon } from "./components/Icon";
 import {
   addPageNumbers,
@@ -15,6 +16,7 @@ import {
   type WatermarkOptions,
 } from "./pdf/finishOps";
 import { useHistory } from "./hooks/useHistory";
+import { usePersistentState } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
 import { loadPdf } from "./pdf/loader";
@@ -54,8 +56,20 @@ export function App() {
   const [tool, setTool] = useState<Tool>("select");
   const doc = useHistory<DocState>(EMPTY_DOC);
   const { edits, textBoxes, redactions, annotations, stamps } = doc.state;
-  const [drawTool, setDrawTool] = useState<AnnotationTool>("highlight");
-  const [drawStyle, setDrawStyle] = useState<DrawStyle>({ color: "#f4c400", width: 3 });
+  // Remembered across sessions so the user's choices aren't reset each time.
+  const [drawTool, setDrawTool] = usePersistentState("pref.drawTool", "highlight") as [
+    AnnotationTool,
+    React.Dispatch<React.SetStateAction<AnnotationTool>>,
+  ];
+  const [drawStyle, setDrawStyle] = usePersistentState<DrawStyle>("pref.drawStyle", {
+    color: "#f4c400",
+    width: 3,
+  });
+  // Last text style the user picked — new text boxes inherit it.
+  const [lastTextStyle, setLastTextStyle] = usePersistentState<TextStyle>(
+    "pref.textStyle",
+    DEFAULT_STYLE,
+  );
   const [sigOpen, setSigOpen] = useState(false);
   const [finishTab, setFinishTab] = useState<"numbers" | "watermark" | null>(null);
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
@@ -275,13 +289,13 @@ export function App() {
   const onAddTextBox = useCallback(
     (pageIndex: number, x: number, y: number) => {
       const id = nextId("tb");
-      const box: TextBox = { id, pageIndex, x, y, text: "", style: { ...DEFAULT_STYLE } };
+      const box: TextBox = { id, pageIndex, x, y, text: "", style: { ...lastTextStyle } };
       doc.set((d) => ({ ...d, textBoxes: [...d.textBoxes, box] }));
       setTool("select");
       setSelection({ kind: "textbox", id });
       setAutoFocusId(id);
     },
-    [doc],
+    [doc, lastTextStyle],
   );
 
   const onAddRedaction = useCallback(
@@ -291,7 +305,8 @@ export function App() {
         ...d,
         redactions: [...d.redactions, { id, pageIndex, x, y, width, height, color: "#000000" }],
       }));
-      setTool("select");
+      // Keep the Redact tool active so several regions can be drawn in a row;
+      // still select the new one so its colour is adjustable right away.
       setSelection({ kind: "redaction", id });
     },
     [doc],
@@ -321,6 +336,19 @@ export function App() {
           ),
         }),
         `note-${id}`,
+      );
+    },
+    [doc],
+  );
+
+  const onMoveAnnotation = useCallback(
+    (annot: Annotation, key: string) => {
+      doc.set(
+        (d) => ({
+          ...d,
+          annotations: d.annotations.map((a) => (a.id === annot.id ? annot : a)),
+        }),
+        key,
       );
     },
     [doc],
@@ -413,6 +441,8 @@ export function App() {
   const onChangeStyle = useCallback(
     (patch: Partial<TextStyle>) => {
       if (!selection) return;
+      // Remember the latest choices so the next new text box inherits them.
+      setLastTextStyle((s) => ({ ...s, ...patch }));
       const onlyColour = Object.keys(patch).length === 1 && patch.color !== undefined;
       const key = onlyColour ? `color-${selection.kind}-${selection.id}` : undefined;
       if (selection.kind === "fragment") {
@@ -435,6 +465,27 @@ export function App() {
     },
     [selection, fragmentById, doc],
   );
+
+  /** Reset the selected text's style to the app default (and clear the
+   * remembered style so future new boxes start clean too). */
+  const onResetStyle = useCallback(() => {
+    if (selection?.kind === "fragment") {
+      const id = selection.id;
+      doc.set((d) => {
+        const e = d.edits[id];
+        if (!e) return d;
+        return { ...d, edits: { ...d.edits, [id]: { ...e, style: {} } } };
+      }, `reset-${id}`);
+    } else if (selection?.kind === "textbox") {
+      const id = selection.id;
+      doc.set((d) => ({
+        ...d,
+        textBoxes: d.textBoxes.map((b) => (b.id === id ? { ...b, style: { ...DEFAULT_STYLE } } : b)),
+      }));
+    }
+    setLastTextStyle(DEFAULT_STYLE);
+    setRevision((r) => r + 1);
+  }, [selection, doc, setLastTextStyle]);
 
   const onChangeRedactionColor = useCallback(
     (color: string) => {
@@ -596,10 +647,10 @@ export function App() {
       {pdf && (
         <>
           <div className="appbar__spacer" />
-          <button className="icon-btn" onClick={undo} disabled={!doc.canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
+          <button className="icon-btn" onClick={undo} disabled={!doc.canUndo} aria-label="Undo" data-tip="Undo · Ctrl+Z">
             <Icon name="undo" size={18} />
           </button>
-          <button className="icon-btn" onClick={redo} disabled={!doc.canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
+          <button className="icon-btn" onClick={redo} disabled={!doc.canRedo} aria-label="Redo" data-tip="Redo · Ctrl+Shift+Z">
             <Icon name="redo" size={18} />
           </button>
           <span className="appbar__changes label-medium">
@@ -610,7 +661,7 @@ export function App() {
             <span>{status === "exporting" ? "Exporting…" : "Download"}</span>
           </button>
           <div className="menu">
-            <button className="icon-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="More" aria-expanded={menuOpen}>
+            <button className="icon-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="More" aria-expanded={menuOpen} data-tip="More actions">
               <Icon name="more_vert" size={18} />
             </button>
             {menuOpen && (
@@ -670,7 +721,7 @@ export function App() {
         className="icon-btn"
         onClick={theme.cycle}
         aria-label={`Theme: ${themeLabel}. Click to change.`}
-        title={themeLabel}
+        data-tip={themeLabel}
       >
         <Icon name={themeIcon} size={20} />
       </button>
@@ -680,6 +731,7 @@ export function App() {
   if (!pdf) {
     return (
       <div className="app">
+        <TooltipHost />
         {appBar}
         <div
           className={`dropzone${dragging ? " dropzone--active" : ""}`}
@@ -729,6 +781,7 @@ export function App() {
 
   return (
     <div className="app">
+      <TooltipHost />
       {appBar}
 
       <div className="workspace">
@@ -748,12 +801,13 @@ export function App() {
           ))}
         </nav>
 
-        <div
-          className="viewer"
-          ref={vp.viewportRef}
-          {...vp.handlers}
-        >
-          <div className="doc">
+        <div className="viewer">
+          <div
+            className="viewer__scroll"
+            ref={vp.viewportRef}
+            {...vp.handlers}
+          >
+            <div className="doc">
             {pdf.pages.map((page) => (
               <PageView
                 key={page.pageIndex}
@@ -778,6 +832,7 @@ export function App() {
                 onChangeTextBox={onChangeTextBox}
                 onChangeRedaction={onChangeRedaction}
                 onChangeNoteText={onChangeNoteText}
+                onMoveAnnotation={onMoveAnnotation}
                 onChangeStamp={onChangeStamp}
                 onAddTextBox={onAddTextBox}
                 onAddRedaction={onAddRedaction}
@@ -785,17 +840,18 @@ export function App() {
                 onPlaceStamp={onPlaceStamp}
               />
             ))}
+            </div>
           </div>
 
-          {/* Floating zoom control */}
+          {/* Pinned zoom control (bottom-right, does not scroll) */}
           <div className="zoombar" role="group" aria-label="Zoom">
-            <button className="icon-btn" onClick={vp.zoomOut} aria-label="Zoom out">
+            <button className="icon-btn" onClick={vp.zoomOut} aria-label="Zoom out" data-tip="Zoom out">
               <Icon name="remove" size={18} />
             </button>
-            <button className="zoombar__label label-medium" onClick={vp.resetZoom} title="Reset to fit width">
+            <button className="zoombar__label label-medium" onClick={vp.resetZoom} data-tip="Fit to width">
               {Math.round(vp.zoom * 100)}%
             </button>
-            <button className="icon-btn" onClick={vp.zoomIn} aria-label="Zoom in">
+            <button className="icon-btn" onClick={vp.zoomIn} aria-label="Zoom in" data-tip="Zoom in">
               <Icon name="add" size={18} />
             </button>
           </div>
@@ -811,19 +867,24 @@ export function App() {
         </div>
 
         {selection && (
-          <aside className="panel">
-            <PropertiesPanel
-              selection={selection}
-              style={activeStyle}
-              redactionColor={redactionColor}
-              annotation={selectedAnnotation}
-              onChangeStyle={onChangeStyle}
-              onChangeRedactionColor={onChangeRedactionColor}
-              onChangeAnnotation={onChangeAnnotation}
-              onDelete={onDelete}
-              onClose={() => setSelection(null)}
-            />
-          </aside>
+          <>
+            {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
+            <div className="scrim" onPointerDown={() => setSelection(null)} />
+            <aside className="panel">
+              <PropertiesPanel
+                selection={selection}
+                style={activeStyle}
+                redactionColor={redactionColor}
+                annotation={selectedAnnotation}
+                onChangeStyle={onChangeStyle}
+                onChangeRedactionColor={onChangeRedactionColor}
+                onChangeAnnotation={onChangeAnnotation}
+                onDelete={onDelete}
+                onReset={onResetStyle}
+                onClose={() => setSelection(null)}
+              />
+            </aside>
+          </>
         )}
       </div>
 

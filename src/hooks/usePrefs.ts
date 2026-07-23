@@ -1,0 +1,52 @@
+import { useEffect, useState } from "react";
+
+/** Read a JSON-serialised preference, shallow-merged over a fallback so a
+ * partial/older stored shape can't drop required fields. */
+export function loadPref<T extends object>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) return { ...fallback, ...JSON.parse(raw) };
+  } catch {
+    /* ignore */
+  }
+  return fallback;
+}
+
+function loadRaw(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * State that persists to localStorage. Objects are shallow-merged over the
+ * fallback on load; primitives (pass a string) are stored verbatim. Lets the
+ * app remember the user's last font/size/colour, draw tool, etc. instead of
+ * snapping back to defaults each session.
+ */
+export function usePersistentState<T extends object>(
+  key: string,
+  fallback: T,
+): [T, React.Dispatch<React.SetStateAction<T>>];
+export function usePersistentState(
+  key: string,
+  fallback: string,
+): [string, React.Dispatch<React.SetStateAction<string>>];
+export function usePersistentState(key: string, fallback: unknown): unknown {
+  const isObj = typeof fallback === "object" && fallback !== null;
+  const [value, setValue] = useState(() =>
+    isObj
+      ? loadPref(key, fallback as object)
+      : loadRaw(key, fallback as string),
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, isObj ? JSON.stringify(value) : String(value));
+    } catch {
+      /* ignore */
+    }
+  }, [key, value, isObj]);
+  return [value, setValue];
+}

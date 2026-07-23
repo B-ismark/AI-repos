@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { Icon } from "./Icon";
+import { useSignatures } from "../hooks/useSignatures";
 
 interface Props {
   onCreate: (sig: { dataUrl: string; w: number; h: number }) => void;
@@ -18,8 +19,15 @@ export function SignatureDialog({ onCreate, onClose }: Props) {
   const dirty = useRef(false);
   const [typed, setTyped] = useState("");
   const [uploaded, setUploaded] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
+  const { sigs, save, remove } = useSignatures();
 
   const ctx = () => canvasRef.current?.getContext("2d") ?? null;
+
+  /** Persist to the gallery, then hand off for placement. */
+  const commit = (sig: { dataUrl: string; w: number; h: number }) => {
+    save(sig);
+    onCreate(sig);
+  };
 
   const pos = (e: React.PointerEvent) => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -59,7 +67,7 @@ export function SignatureDialog({ onCreate, onClose }: Props) {
   const insert = () => {
     if (tab === "draw") {
       if (!dirty.current) return;
-      onCreate({ dataUrl: canvasRef.current!.toDataURL("image/png"), w: PAD_W, h: PAD_H });
+      commit({ dataUrl: canvasRef.current!.toDataURL("image/png"), w: PAD_W, h: PAD_H });
     } else if (tab === "type") {
       if (!typed.trim()) return;
       const c = document.createElement("canvas");
@@ -74,9 +82,9 @@ export function SignatureDialog({ onCreate, onClose }: Props) {
       g2.fillStyle = "#111";
       g2.textBaseline = "middle";
       g2.fillText(typed, 20, 58);
-      onCreate({ dataUrl: c.toDataURL("image/png"), w: c.width, h: c.height });
+      commit({ dataUrl: c.toDataURL("image/png"), w: c.width, h: c.height });
     } else if (uploaded) {
-      onCreate(uploaded);
+      commit(uploaded);
     }
   };
 
@@ -98,10 +106,38 @@ export function SignatureDialog({ onCreate, onClose }: Props) {
       <div className="dialog" onPointerDown={(e) => e.stopPropagation()}>
         <div className="dialog__head">
           <span className="title-large">Add signature</span>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={onClose} aria-label="Close" data-tip="Close">
             <Icon name="close" size={20} />
           </button>
         </div>
+
+        {sigs.length > 0 && (
+          <div className="sigsaved">
+            <span className="field__label label-medium">Saved signatures</span>
+            <div className="sigsaved__row">
+              {sigs.map((s) => (
+                <div key={s.dataUrl.slice(-24)} className="sigsaved__item">
+                  <button
+                    className="sigsaved__use"
+                    onClick={() => onCreate(s)}
+                    data-tip="Use this signature"
+                    aria-label="Use saved signature"
+                  >
+                    <img src={s.dataUrl} alt="saved signature" />
+                  </button>
+                  <button
+                    className="sigsaved__del"
+                    onClick={() => remove(s.dataUrl)}
+                    data-tip="Remove"
+                    aria-label="Remove saved signature"
+                  >
+                    <Icon name="close" size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="segmented dialog__tabs">
           {(["draw", "type", "upload"] as Tab[]).map((t) => (

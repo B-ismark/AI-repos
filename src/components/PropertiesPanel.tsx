@@ -11,6 +11,8 @@ interface Props {
   onChangeRedactionColor: (color: string) => void;
   onChangeAnnotation: (patch: { color?: string; strokeWidth?: number }) => void;
   onDelete: () => void;
+  /** Reset the selected text's style back to the default. */
+  onReset?: () => void;
   /** Mobile bottom-sheet close affordance (omitted on desktop side panel). */
   onClose?: () => void;
 }
@@ -40,6 +42,7 @@ export function PropertiesPanel({
   onChangeRedactionColor,
   onChangeAnnotation,
   onDelete,
+  onReset,
   onClose,
 }: Props) {
   const title =
@@ -58,7 +61,7 @@ export function PropertiesPanel({
       <div className="props__header">
         <span className="props__title title-medium">{title}</span>
         {onClose && (
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={onClose} aria-label="Close" data-tip="Close">
             <Icon name="close" size={20} />
           </button>
         )}
@@ -179,11 +182,18 @@ export function PropertiesPanel({
             <ColorField value={style.color} onChange={(c) => onChangeStyle({ color: c })} />
           </div>
 
-          {selection.kind === "textbox" && (
-            <button className="btn btn--danger" onClick={onDelete}>
-              <Icon name="delete" size={16} /> Delete
-            </button>
-          )}
+          <div className="props__row-actions">
+            {onReset && (
+              <button className="btn btn--text" onClick={onReset} data-tip="Reset style to default">
+                <Icon name="rotate" size={16} /> Reset style
+              </button>
+            )}
+            {selection.kind === "textbox" && (
+              <button className="btn btn--danger" onClick={onDelete}>
+                <Icon name="delete" size={16} /> Delete
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
