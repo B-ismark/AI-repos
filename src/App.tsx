@@ -6,7 +6,11 @@ import { DrawToolbar } from "./components/DrawToolbar";
 import { SelectionBar } from "./components/SelectionBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { TooltipHost } from "./components/TooltipHost";
+import { FindBar } from "./components/FindBar";
+import { PageNav } from "./components/PageNav";
 import { Icon } from "./components/Icon";
+import { findMatches, extractText, type FindMatch } from "./pdf/find";
+import { useAutosave } from "./hooks/useAutosave";
 import type { PageNumberOptions, WatermarkOptions } from "./pdf/finishOps";
 import { useHistory } from "./hooks/useHistory";
 import { useMediaQuery } from "./hooks/useMediaQuery";
@@ -156,6 +160,10 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [organizeOpen, setOrganizeOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findActive, setFindActive] = useState(0);
+  const [navOpen, setNavOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const menuListRef = useRef<HTMLDivElement>(null);
@@ -164,6 +172,7 @@ export function App() {
 
   const vp = useViewport();
   const theme = useTheme();
+  const { restorable, save: saveSession, clear: clearAutosave, dismissRestore } = useAutosave();
   // >=600px gets the persistent side panel + tool rail (Material Medium+);
   // <600px is the compact phone layout (contextual selection bar + on-demand
   // sheet, `sheetOpen` state above).
@@ -199,15 +208,118 @@ export function App() {
   const changeCount =
     editedFragmentCount + textBoxes.length + redactions.length + annotations.length + stamps.length;
 
+  // ---- Find in document (Ctrl/⌘+F) ----
+  const matches: FindMatch[] = useMemo(
+    () => (pdf && findOpen && findQuery ? findMatches(pdf.pages, edits, findQuery) : []),
+    [pdf, findOpen, findQuery, edits],
+  );
+  const matchesByPage = useMemo(() => {
+    const m = new Map<number, FindMatch[]>();
+    for (const hit of matches) {
+      const arr = m.get(hit.pageIndex) ?? [];
+      arr.push(hit);
+      m.set(hit.pageIndex, arr);
+    }
+    return m;
+  }, [matches]);
+  const activeMatch = matches[findActive] ?? null;
+
+  // Keep the active index in range as the result set changes.
+  useEffect(() => {
+    if (findActive > matches.length - 1) setFindActive(matches.length ? matches.length - 1 : 0);
+  }, [matches.length, findActive]);
+
+  // Scroll the active match into view (centre it in the scroll surface).
+  useEffect(() => {
+    if (!activeMatch) return;
+    const el = document.querySelector<HTMLElement>(`[data-page-index="${activeMatch.pageIndex}"]`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [activeMatch]);
+
+  const nextMatch = useCallback(() => {
+    setFindActive((i) => (matches.length ? (i + 1) % matches.length : 0));
+  }, [matches.length]);
+  const prevMatch = useCallback(() => {
+    setFindActive((i) => (matches.length ? (i - 1 + matches.length) % matches.length : 0));
+  }, [matches.length]);
+  const openFind = useCallback(() => {
+    setSelection(null);
+    setFindActive(0);
+    setFindOpen(true);
+  }, []);
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery("");
+  }, []);
+
+  /** Redact every current search match (one undo step). */
+  const redactAllMatches = useCallback(() => {
+    if (matches.length === 0) return;
+    doc.set((d) => ({
+      ...d,
+      redactions: [
+        ...d.redactions,
+        ...matches.map((m) => ({
+          id: nextId("rd"),
+          pageIndex: m.pageIndex,
+          x: m.x,
+          y: m.y,
+          width: m.width,
+          height: m.height,
+          color: "#000000",
+        })),
+      ],
+    }));
+    const n = matches.length;
+    setMessage(`Redacted ${n} match${n === 1 ? "" : "es"} of “${findQuery}”.`);
+    setStatus("ready");
+    closeFind();
+  }, [matches, doc, findQuery, closeFind]);
+
+  /** Copy all document text to the clipboard. */
+  const copyAllText = useCallback(async () => {
+    if (!pdf) return;
+    setMenuOpen(false);
+    try {
+      await navigator.clipboard.writeText(extractText(pdf.pages, edits));
+      setStatus("ready");
+      setMessage("Document text copied to clipboard.");
+    } catch {
+      setStatus("error");
+      setMessage("Couldn't copy — your browser blocked clipboard access.");
+    }
+  }, [pdf, edits]);
+
+  /** Download all document text as a .txt file. */
+  const exportTextFile = useCallback(() => {
+    if (!pdf) return;
+    setMenuOpen(false);
+    const blob = new Blob([extractText(pdf.pages, edits)], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName.replace(/\.pdf$/i, "") + ".txt";
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus("ready");
+    setMessage("Text exported.");
+  }, [pdf, edits, fileName]);
+
+  // ---- Autosave to IndexedDB (debounced) + one-time restore ----
+  useEffect(() => {
+    if (!pdf) return;
+    saveSession(fileName, pdf.bytes, doc.state, changeCount > 0);
+  }, [pdf, fileName, doc.state, changeCount, saveSession]);
+
   const openBytes = useCallback(
-    async (bytes: ArrayBuffer, name: string, note?: string) => {
+    async (bytes: ArrayBuffer, name: string, note?: string, seedDoc?: DocState) => {
       setStatus("loading");
       setMessage(`Loading ${name}…`);
       try {
         const loaded = await loadPdf(bytes);
         setPdf(loaded);
         setFileName(name);
-        doc.reset(EMPTY_DOC);
+        doc.reset(seedDoc ?? EMPTY_DOC);
         setSelection(null);
         setTool("select");
         setRevision((r) => r + 1);
@@ -235,6 +347,24 @@ export function App() {
     },
     [openBytes],
   );
+
+  const restoreSession = useCallback(async () => {
+    if (!restorable) return;
+    const s = restorable;
+    // Bump the id counter past any restored ids so new objects don't collide.
+    const ids = [
+      ...s.doc.textBoxes.map((b) => b.id),
+      ...s.doc.redactions.map((r) => r.id),
+      ...s.doc.annotations.map((a) => a.id),
+      ...s.doc.stamps.map((st) => st.id),
+    ];
+    for (const id of ids) {
+      const n = Number(id.split("-").pop());
+      if (Number.isFinite(n) && n + 1 > counter.current) counter.current = n + 1;
+    }
+    dismissRestore();
+    await openBytes(s.bytes, s.fileName, "Session restored.", s.doc);
+  }, [restorable, dismissRestore, openBytes]);
 
   const downloadBytes = useCallback((bytes: Uint8Array, filename: string) => {
     const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
@@ -725,6 +855,16 @@ export function App() {
         redo();
         return;
       }
+      if (mod && key === "f") {
+        e.preventDefault();
+        openFind();
+        return;
+      }
+      if (e.key === "Escape" && findOpen) {
+        e.preventDefault();
+        closeFind();
+        return;
+      }
       // Escape clears the current selection (and closes the mobile sheet /
       // desktop panel, which is driven by selection). Modals stop Escape from
       // reaching here via their own capture-phase handler.
@@ -829,6 +969,9 @@ export function App() {
     onChangeRedaction,
     onChangeStamp,
     onMoveAnnotation,
+    openFind,
+    closeFind,
+    findOpen,
   ]);
 
   const download = useCallback(async () => {
@@ -866,7 +1009,8 @@ export function App() {
     setMessage("");
     setMenuOpen(false);
     setConfirmReset(false);
-  }, [doc]);
+    clearAutosave();
+  }, [doc, clearAutosave]);
 
   const reset = useCallback(() => {
     setMenuOpen(false);
@@ -893,6 +1037,17 @@ export function App() {
         </span>
         <span className="title-large appbar__name">PDF Editor</span>
       </div>
+      {pdf && (
+        <button
+          className={`icon-btn${navOpen ? " icon-btn--on" : ""}`}
+          onClick={() => setNavOpen((v) => !v)}
+          aria-label="Toggle page thumbnails"
+          aria-pressed={navOpen}
+          data-tip="Pages"
+        >
+          <Icon name="panel" size={18} />
+        </button>
+      )}
       {!pdf && <div className="appbar__spacer" />}
       {pdf && (
         <>
@@ -902,6 +1057,9 @@ export function App() {
           </button>
           <button className="icon-btn" onClick={redo} disabled={!doc.canRedo} aria-label="Redo" data-tip="Redo · Ctrl+Shift+Z">
             <Icon name="redo" size={18} />
+          </button>
+          <button className="icon-btn" onClick={() => (findOpen ? closeFind() : openFind())} aria-label="Find" aria-pressed={findOpen} data-tip="Find · Ctrl+F">
+            <Icon name="search" size={18} />
           </button>
           <span className="appbar__changes label-medium">
             {changeCount > 0 ? `${changeCount} change${changeCount === 1 ? "" : "s"}` : ""}
@@ -956,6 +1114,13 @@ export function App() {
                   </button>
                   <button className="menu__item" onClick={exportImages} role="menuitem">
                     <Icon name="image" size={18} /> Export as images
+                  </button>
+                  <div className="menu__divider" />
+                  <button className="menu__item" onClick={copyAllText} role="menuitem">
+                    <Icon name="content_copy" size={18} /> Copy all text
+                  </button>
+                  <button className="menu__item" onClick={exportTextFile} role="menuitem">
+                    <Icon name="scan_text" size={18} /> Export text (.txt)
                   </button>
                   <div className="menu__divider" />
                   <button
@@ -1022,6 +1187,17 @@ export function App() {
             if (file) void openFile(file);
           }}
         >
+          {restorable && (
+            <div className="restore-banner">
+              <span className="restore-banner__icon"><Icon name="rotate" size={22} /></span>
+              <div className="restore-banner__text">
+                <b className="title-small">Restore your last session?</b>
+                <span className="body-small">{restorable.fileName}</span>
+              </div>
+              <button className="btn btn--tonal" onClick={restoreSession}>Restore</button>
+              <button className="btn btn--text" onClick={dismissRestore}>Dismiss</button>
+            </div>
+          )}
           <div className="dropzone__card">
             <div className="dropzone__icon">
               <Icon name="picture_as_pdf" size={30} />
@@ -1060,6 +1236,16 @@ export function App() {
       {appBar}
 
       <div className="workspace">
+        {navOpen && (
+          <>
+            {compact && <div className="pagenav__scrim" onClick={() => setNavOpen(false)} />}
+            <PageNav
+              bytes={pdf.bytes}
+              pageCount={pdf.pages.length}
+              onClose={compact ? () => setNavOpen(false) : undefined}
+            />
+          </>
+        )}
         <nav className="toolnav" aria-label="Tools">
           {TOOLS.map((t) => (
             <button
@@ -1099,6 +1285,8 @@ export function App() {
                 annotations={annotations.filter((a) => a.pageIndex === page.pageIndex)}
                 stamps={stamps.filter((s) => s.pageIndex === page.pageIndex)}
                 placing={!!pendingStamp}
+                findMatches={matchesByPage.get(page.pageIndex)}
+                activeFindId={activeMatch?.id ?? null}
                 selection={selection}
                 autoFocusId={autoFocusId}
                 editingId={editingId}
@@ -1136,6 +1324,22 @@ export function App() {
               <Icon name="add" size={18} />
             </button>
           </div>
+          )}
+
+          {findOpen && (
+            <FindBar
+              query={findQuery}
+              count={matches.length}
+              active={matches.length ? findActive + 1 : 0}
+              onQuery={(q) => {
+                setFindQuery(q);
+                setFindActive(0);
+              }}
+              onNext={nextMatch}
+              onPrev={prevMatch}
+              onRedactAll={redactAllMatches}
+              onClose={closeFind}
+            />
           )}
 
           {tool === "draw" && (

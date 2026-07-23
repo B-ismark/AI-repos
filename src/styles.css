@@ -196,6 +196,108 @@ body {
 .toolnav__btn--on .toolnav__ind { background: var(--secondary-container); color: var(--on-secondary-container); }
 .toolnav__label { color: inherit; font-size: 0.6875rem; letter-spacing: 0.01em; }
 
+/* ============ Page navigator (thumbnail rail) ============ */
+.pagenav {
+  width: 156px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-container);
+  border-right: 1px solid var(--outline-variant);
+  z-index: 18;
+}
+.pagenav__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--outline-variant);
+  flex: none;
+}
+.pagenav__title { color: var(--on-surface-variant); text-transform: uppercase; letter-spacing: 0.06em; }
+.pagenav__list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+.pagenav__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-md);
+}
+.pagenav__item:hover { background: var(--surface-container-high); }
+.pagenav__item--on { background: var(--secondary-container); }
+.pagenav__thumb {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--outline-variant);
+  overflow: hidden;
+  background: var(--surface-container-lowest);
+}
+.pagenav__item--on .pagenav__thumb { border-color: var(--primary); }
+.pagenav__num { color: var(--on-surface-variant); }
+.pagenav__item--on .pagenav__num { color: var(--on-secondary-container); font-weight: 700; }
+.pagenav__scrim { display: none; }
+
+@media (max-width: 599px) {
+  .pagenav {
+    position: fixed;
+    top: calc(52px + env(safe-area-inset-top));
+    left: 0;
+    bottom: 0;
+    width: min(70vw, 220px);
+    box-shadow: var(--shadow-3);
+    animation: pagenav-in var(--dur-med2) var(--ease-emphasized-decelerate);
+  }
+  @keyframes pagenav-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+  .pagenav__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 17;
+    background: color-mix(in srgb, var(--scrim) 32%, transparent);
+  }
+}
+
+/* ============ Restore-session banner (empty state) ============ */
+.restore-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 440px;
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+}
+.restore-banner__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+.restore-banner__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.restore-banner__text b { color: var(--on-surface); }
+.restore-banner__text span { color: var(--on-surface-variant); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Viewer frame: a non-scrolling stage so floating controls (zoom, draw bar)
    stay pinned while only the inner surface scrolls. */
 .viewer {
@@ -815,6 +917,66 @@ body {
 }
 .selbar__btn:active { background: color-mix(in srgb, var(--on-surface) 12%, transparent); }
 .selbar__btn--danger { color: var(--error); }
+
+/* ============ Find bar ============ */
+.findbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 24px);
+  padding: 4px 6px 4px 12px;
+  background: var(--surface-container-high);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-2);
+  z-index: 17;
+}
+.findbar__icon { color: var(--on-surface-variant); flex: none; }
+.findbar__input {
+  min-width: 140px;
+  max-width: 42vw;
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+  font: 500 0.9375rem/1 var(--font-plain);
+  padding: 0 6px;
+  outline: none;
+}
+.findbar__count { color: var(--on-surface-variant); min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; flex: none; }
+.findbar__sep { width: 1px; height: 24px; background: var(--outline-variant); margin: 0 2px; flex: none; }
+.findbar__redact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--secondary-container);
+  color: var(--on-secondary-container);
+  font: 500 0.8125rem/1 var(--font-plain);
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+}
+.findbar__redact:disabled { opacity: 0.5; cursor: default; }
+
+/* Search-hit highlights on the page overlay (non-interactive). */
+.findlayer { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.findhit {
+  position: absolute;
+  background: color-mix(in srgb, #f4c400 55%, transparent);
+  border-radius: 1px;
+  mix-blend-mode: multiply;
+}
+.findhit--active {
+  background: color-mix(in srgb, #ff9800 72%, transparent);
+  outline: 1.5px solid #e8710a;
+}
 
 .drawbar__tools { display: flex; gap: 2px; flex: none; }
 .drawbar__sep { width: 1px; height: 28px; background: var(--outline-variant); margin: 0 2px; flex: none; }

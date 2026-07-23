@@ -21,6 +21,7 @@ import { StampItem } from "./StampItem";
 import { AnnotationFrame } from "./AnnotationFrame";
 import { dragState } from "../hooks/useDrag";
 import type { Stamp } from "../pdf/types";
+import type { FindMatch } from "../pdf/find";
 
 /** Annotation spec minus the fields the App assigns (id, pageIndex). */
 export type AnnotSpec = Omit<Annotation, "id" | "pageIndex">;
@@ -38,6 +39,9 @@ interface Props {
   annotations: Annotation[];
   stamps: Stamp[];
   placing: boolean;
+  /** Search hits on this page (PDF units), and the id of the active one. */
+  findMatches?: FindMatch[];
+  activeFindId?: string | null;
   selection: Selection;
   autoFocusId: string | null;
   /** Id of the element currently in text-edit mode (mobile), or null. */
@@ -74,7 +78,7 @@ interface Gesture {
 export function PageView(props: Props) {
   const {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
-    annotations, stamps, placing, selection, autoFocusId, editingId, compact, revision, onSelect,
+    annotations, stamps, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, revision, onSelect,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction,
     onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
     onPlaceStamp,
@@ -196,7 +200,7 @@ export function PageView(props: Props) {
   const notes = annotations.filter((a) => a.kind === "note") as Extract<Annotation, { kind: "note" }>[];
 
   return (
-    <div className="page" style={{ width: W, height: Hpx }} aria-busy={!painted && !error}>
+    <div className="page" data-page-index={page.pageIndex} style={{ width: W, height: Hpx }} aria-busy={!painted && !error}>
       <canvas ref={canvasRef} className="page__canvas" />
       {!painted && !error && <div className="page__skeleton" aria-hidden="true" />}
       {error ? (
@@ -214,6 +218,23 @@ export function PageView(props: Props) {
             setG(null);
           }}
         >
+          {findMatches && findMatches.length > 0 && (
+            <div className="findlayer" aria-hidden="true">
+              {findMatches.map((m) => (
+                <span
+                  key={m.id}
+                  className={`findhit${m.id === activeFindId ? " findhit--active" : ""}`}
+                  style={{
+                    left: m.x * scale,
+                    top: (H - (m.y + m.height)) * scale,
+                    width: m.width * scale,
+                    height: m.height * scale,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
           <AnnotationLayer
             annotations={nonNote}
             scale={scale}
