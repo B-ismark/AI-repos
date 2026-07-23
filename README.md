@@ -6,6 +6,22 @@ no uploads, no accounts.
 
 ![PDF Text Editor](docs/screenshot.png)
 
+## Design & platforms
+
+The UI is built on **Material 3 Expressive** design tokens (color roles with
+light/dark, the expressive shape scale, the M3 type scale, and motion easings)
+and is **mobile- and tablet-first**:
+
+- **Responsive shell** — a bottom app bar + extended FAB + bottom-sheet
+  properties on phones; a tool rail + persistent side panel on tablet/desktop.
+- **Touch-first canvas** — one finger pans/scrolls (never edits by accident),
+  two fingers pinch-zoom, double-tap toggles fit ⇄ 2×, with app-managed
+  zoom anchoring and 48px touch targets / enlarged drag handles on touch.
+- **Self-contained** — inline SVG icons and graceful system-font fallback, so
+  the UI renders fully even if web fonts are blocked or offline.
+
+<img src="docs/screenshot-mobile.png" alt="Mobile layout" width="280" align="right" />
+
 ## Features
 
 - **Edit existing text** — click any text run and type over it in place.
@@ -81,21 +97,24 @@ Undo/redo is available from the toolbar (↶ ↷) or the keyboard
 
 ```
 src/
+  theme.css       Material 3 Expressive design tokens (color/shape/type/motion)
   pdf/
     types.ts      shared TypeScript types
     style.ts      font/style resolution + colour helpers
-    loader.ts     parse + render pages with PDF.js
+    loader.ts     parse + render pages with PDF.js (+ document cache)
     exporter.ts   write edits/text/redactions back with pdf-lib
   hooks/
     useHistory.ts undo/redo stack with gesture coalescing
-    useDrag.ts    pointer-drag helper for move/resize
+    useDrag.ts    pointer-drag helper + shared drag lock
+    useViewport.ts fit-to-width scale + pinch/wheel/double-tap zoom
   components/
+    Icon.tsx              inline SVG icon set
     PageView.tsx          one page: canvas + editable overlay + tools
     EditableFragment.tsx  a single in-place editable text run
     TextBoxItem.tsx       a user-added text box (draggable/resizable)
     RedactionItem.tsx     a redaction rectangle (draggable/resizable)
-    PropertiesPanel.tsx   contextual font/colour/size controls
-  App.tsx         upload, toolbar, viewer, download orchestration
+    PropertiesPanel.tsx   contextual font/colour/size controls (M3)
+  App.tsx         responsive shell, viewer, download orchestration
 ```
 
 ## Limitations

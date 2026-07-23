@@ -13,6 +13,7 @@ import type {
 import { EditableFragment } from "./EditableFragment";
 import { TextBoxItem } from "./TextBoxItem";
 import { RedactionItem } from "./RedactionItem";
+import { dragState } from "../hooks/useDrag";
 
 interface Props {
   bytes: ArrayBuffer;
@@ -24,17 +25,12 @@ interface Props {
   redactions: Redaction[];
   selection: Selection;
   autoFocusId: string | null;
-  /** Bumps on undo/redo so editable text is re-seeded from state. */
   revision: number;
   onSelect: (selection: Selection) => void;
   onChangeFragmentText: (id: string, text: string) => void;
   onChangeTextBoxText: (id: string, text: string) => void;
   onChangeTextBox: (id: string, patch: Partial<TextBox>, key: string) => void;
-  onChangeRedaction: (
-    id: string,
-    patch: Partial<Redaction>,
-    key: string,
-  ) => void;
+  onChangeRedaction: (id: string, patch: Partial<Redaction>, key: string) => void;
   onAddTextBox: (pageIndex: number, x: number, y: number) => void;
   onAddRedaction: (
     pageIndex: number,
@@ -45,10 +41,11 @@ interface Props {
   ) => void;
 }
 
-/** Minimum drag size (CSS px) before a redaction is created. */
 const MIN_REDACTION = 6;
 
-/** One rendered page: a raster canvas with an editable text overlay on top. */
+/** One rendered page: a raster canvas with an editable overlay on top.
+ * The page box is sized in CSS by `scale` (instant during zoom); the canvas
+ * backing store is re-rendered on a short debounce so pinch stays smooth. */
 export function PageView(props: Props) {
   const {
     bytes,
@@ -77,15 +74,19 @@ export function PageView(props: Props) {
     { x0: number; y0: number; x1: number; y1: number } | null
   >(null);
 
+  // Debounced canvas render at the current scale.
   useEffect(() => {
     let cancelled = false;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    renderPage(bytes, page.pageIndex, canvas, scale).catch((err) => {
-      if (!cancelled) setError(String(err));
-    });
+    const timer = setTimeout(() => {
+      renderPage(bytes, page.pageIndex, canvas, scale).catch((err) => {
+        if (!cancelled) setError(String(err));
+      });
+    }, 90);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [bytes, page.pageIndex, scale]);
 
@@ -98,33 +99,33 @@ export function PageView(props: Props) {
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
-  const onOverlayMouseDown = (ev: React.MouseEvent) => {
-    // Only react to clicks on the overlay background, not on children.
+  const onOverlayPointerDown = (ev: React.PointerEvent) => {
     if (ev.target !== overlayRef.current) return;
     const { x, y } = localPoint(ev.clientX, ev.clientY);
 
     if (tool === "redact") {
       ev.preventDefault();
+      ev.stopPropagation();
+      (ev.target as HTMLElement).setPointerCapture(ev.pointerId);
+      dragState.active = true;
       setDrag({ x0: x, y0: y, x1: x, y1: y });
     } else if (tool === "text") {
-      // Stop the default focus shift so the new box's auto-focus sticks.
       ev.preventDefault();
       const size = 16;
-      const xPdf = x / scale;
-      const yPdf = H - y / scale - size; // baseline below the click point
-      onAddTextBox(page.pageIndex, xPdf, yPdf);
+      onAddTextBox(page.pageIndex, x / scale, H - y / scale - size);
     } else {
       onSelect(null);
     }
   };
 
-  const onOverlayMouseMove = (ev: React.MouseEvent) => {
+  const onOverlayPointerMove = (ev: React.PointerEvent) => {
     if (!drag) return;
     const { x, y } = localPoint(ev.clientX, ev.clientY);
     setDrag({ ...drag, x1: x, y1: y });
   };
 
-  const onOverlayMouseUp = () => {
+  const onOverlayPointerUp = () => {
+    dragState.active = false;
     if (!drag) return;
     const left = Math.min(drag.x0, drag.x1);
     const top = Math.min(drag.y0, drag.y1);
@@ -153,11 +154,14 @@ export function PageView(props: Props) {
         <div
           ref={overlayRef}
           className="page__overlay"
-          style={{ cursor }}
-          onMouseDown={onOverlayMouseDown}
-          onMouseMove={onOverlayMouseMove}
-          onMouseUp={onOverlayMouseUp}
-          onMouseLeave={() => drag && setDrag(null)}
+          style={{ cursor, touchAction: tool === "select" ? undefined : "none" }}
+          onPointerDown={onOverlayPointerDown}
+          onPointerMove={onOverlayPointerMove}
+          onPointerUp={onOverlayPointerUp}
+          onPointerCancel={() => {
+            dragState.active = false;
+            setDrag(null);
+          }}
         >
           {page.fragments.map((fragment) => {
             const edit = edits[fragment.id];

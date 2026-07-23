@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageView } from "./components/PageView";
 import { PropertiesPanel } from "./components/PropertiesPanel";
+import { Icon } from "./components/Icon";
 import { useHistory } from "./hooks/useHistory";
+import { useViewport } from "./hooks/useViewport";
 import { loadPdf } from "./pdf/loader";
 import { exportPdf, isFragmentModified } from "./pdf/exporter";
 import { DEFAULT_STYLE, resolveFragmentStyle } from "./pdf/style";
@@ -20,10 +22,10 @@ type Status = "idle" | "loading" | "ready" | "exporting" | "error";
 
 const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [] };
 
-const TOOLS: { key: Tool; label: string; hint: string }[] = [
-  { key: "select", label: "Select", hint: "Click text to edit, restyle, drag, or resize it" },
-  { key: "text", label: "Add text", hint: "Click on the page to drop a text box" },
-  { key: "redact", label: "Redact", hint: "Drag to permanently black out a region" },
+const TOOLS: { key: Tool; label: string; icon: string }[] = [
+  { key: "select", label: "Select", icon: "arrow_selector_tool" },
+  { key: "text", label: "Add text", icon: "text_fields" },
+  { key: "redact", label: "Redact", icon: "select" },
 ];
 
 export function App() {
@@ -34,15 +36,16 @@ export function App() {
   const { edits, textBoxes, redactions } = doc.state;
   const [selection, setSelection] = useState<Selection>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
-  // Bumped on undo/redo/load so imperatively-managed editable text re-seeds.
   const [revision, setRevision] = useState(0);
-  const [scale, setScale] = useState(1.4);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const counter = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${counter.current++}`;
+
+  const vp = useViewport();
 
   const fragmentById = useMemo(() => {
     const map = new Map<string, TextFragment>();
@@ -59,8 +62,7 @@ export function App() {
         : 0,
     [pdf, fragmentById, edits],
   );
-  const changeCount =
-    editedFragmentCount + textBoxes.length + redactions.length;
+  const changeCount = editedFragmentCount + textBoxes.length + redactions.length;
 
   const openFile = useCallback(
     async (file: File) => {
@@ -80,18 +82,21 @@ export function App() {
         setSelection(null);
         setTool("select");
         setRevision((r) => r + 1);
+        vp.setPageWidth(
+          Math.max(...loaded.pages.map((p) => p.viewBox.width), 1),
+        );
+        vp.resetZoom();
         setStatus("ready");
         const total = loaded.pages.reduce((n, p) => n + p.fragments.length, 0);
-        setMessage(`${loaded.pages.length} page(s), ${total} text fragments.`);
+        setMessage(`${loaded.pages.length} page(s) · ${total} text fragments`);
       } catch (err) {
         setStatus("error");
         setMessage(`Could not open PDF: ${String(err)}`);
       }
     },
-    [doc],
+    [doc, vp],
   );
 
-  // ---- Text edits ----
   const onChangeFragmentText = useCallback(
     (id: string, text: string) => {
       doc.set(
@@ -118,15 +123,12 @@ export function App() {
     [doc],
   );
 
-  // ---- Geometry (drag / resize) ----
   const onChangeTextBox = useCallback(
     (id: string, patch: Partial<TextBox>, key: string) => {
       doc.set(
         (d) => ({
           ...d,
-          textBoxes: d.textBoxes.map((b) =>
-            b.id === id ? { ...b, ...patch } : b,
-          ),
+          textBoxes: d.textBoxes.map((b) => (b.id === id ? { ...b, ...patch } : b)),
         }),
         key,
       );
@@ -139,9 +141,7 @@ export function App() {
       doc.set(
         (d) => ({
           ...d,
-          redactions: d.redactions.map((r) =>
-            r.id === id ? { ...r, ...patch } : r,
-          ),
+          redactions: d.redactions.map((r) => (r.id === id ? { ...r, ...patch } : r)),
         }),
         key,
       );
@@ -149,18 +149,10 @@ export function App() {
     [doc],
   );
 
-  // ---- Adding ----
   const onAddTextBox = useCallback(
     (pageIndex: number, x: number, y: number) => {
       const id = nextId("tb");
-      const box: TextBox = {
-        id,
-        pageIndex,
-        x,
-        y,
-        text: "",
-        style: { ...DEFAULT_STYLE },
-      };
+      const box: TextBox = { id, pageIndex, x, y, text: "", style: { ...DEFAULT_STYLE } };
       doc.set((d) => ({ ...d, textBoxes: [...d.textBoxes, box] }));
       setTool("select");
       setSelection({ kind: "textbox", id });
@@ -174,10 +166,7 @@ export function App() {
       const id = nextId("rd");
       doc.set((d) => ({
         ...d,
-        redactions: [
-          ...d.redactions,
-          { id, pageIndex, x, y, width, height, color: "#000000" },
-        ],
+        redactions: [...d.redactions, { id, pageIndex, x, y, width, height, color: "#000000" }],
       }));
       setTool("select");
       setSelection({ kind: "redaction", id });
@@ -190,7 +179,6 @@ export function App() {
     setSelection(sel);
   }, []);
 
-  // ---- Styling ----
   const activeStyle: TextStyle | null = useMemo(() => {
     if (selection?.kind === "fragment") {
       const f = fragmentById.get(selection.id);
@@ -210,31 +198,21 @@ export function App() {
   const onChangeStyle = useCallback(
     (patch: Partial<TextStyle>) => {
       if (!selection) return;
-      // Colour sweeps coalesce into one undo step; discrete toggles don't.
-      const onlyColour =
-        Object.keys(patch).length === 1 && patch.color !== undefined;
-      const key = onlyColour
-        ? `color-${selection.kind}-${selection.id}`
-        : undefined;
-
+      const onlyColour = Object.keys(patch).length === 1 && patch.color !== undefined;
+      const key = onlyColour ? `color-${selection.kind}-${selection.id}` : undefined;
       if (selection.kind === "fragment") {
         const id = selection.id;
         doc.set((d) => {
           const f = fragmentById.get(id);
           const prev = d.edits[id] ?? { text: f?.original ?? "", style: {} };
-          return {
-            ...d,
-            edits: { ...d.edits, [id]: { ...prev, style: { ...prev.style, ...patch } } },
-          };
+          return { ...d, edits: { ...d.edits, [id]: { ...prev, style: { ...prev.style, ...patch } } } };
         }, key);
       } else if (selection.kind === "textbox") {
         const id = selection.id;
         doc.set(
           (d) => ({
             ...d,
-            textBoxes: d.textBoxes.map((b) =>
-              b.id === id ? { ...b, style: { ...b.style, ...patch } } : b,
-            ),
+            textBoxes: d.textBoxes.map((b) => (b.id === id ? { ...b, style: { ...b.style, ...patch } } : b)),
           }),
           key,
         );
@@ -248,12 +226,7 @@ export function App() {
       if (selection?.kind !== "redaction") return;
       const id = selection.id;
       doc.set(
-        (d) => ({
-          ...d,
-          redactions: d.redactions.map((r) =>
-            r.id === id ? { ...r, color } : r,
-          ),
-        }),
+        (d) => ({ ...d, redactions: d.redactions.map((r) => (r.id === id ? { ...r, color } : r)) }),
         `rcolor-${id}`,
       );
     },
@@ -263,53 +236,46 @@ export function App() {
   const onDelete = useCallback(() => {
     if (selection?.kind === "textbox") {
       const id = selection.id;
-      doc.set((d) => ({
-        ...d,
-        textBoxes: d.textBoxes.filter((b) => b.id !== id),
-      }));
+      doc.set((d) => ({ ...d, textBoxes: d.textBoxes.filter((b) => b.id !== id) }));
       setSelection(null);
     } else if (selection?.kind === "redaction") {
       const id = selection.id;
-      doc.set((d) => ({
-        ...d,
-        redactions: d.redactions.filter((r) => r.id !== id),
-      }));
+      doc.set((d) => ({ ...d, redactions: d.redactions.filter((r) => r.id !== id) }));
       setSelection(null);
     }
   }, [selection, doc]);
 
-  // ---- Undo / redo ----
   const undo = useCallback(() => {
     doc.undo();
     setRevision((r) => r + 1);
   }, [doc]);
-
   const redo = useCallback(() => {
     doc.redo();
     setRevision((r) => r + 1);
   }, [doc]);
 
-  // Drop a selection that no longer exists after an undo/redo.
   useEffect(() => {
     if (selection?.kind === "textbox" && !textBoxes.some((b) => b.id === selection.id)) {
       setSelection(null);
-    } else if (
-      selection?.kind === "redaction" &&
-      !redactions.some((r) => r.id === selection.id)
-    ) {
+    } else if (selection?.kind === "redaction" && !redactions.some((r) => r.id === selection.id)) {
       setSelection(null);
     }
   }, [textBoxes, redactions, selection]);
 
-  // Keyboard: undo/redo, and Delete for a selected redaction.
+  // Auto-dismiss transient status messages (keep errors until superseded).
+  useEffect(() => {
+    if (!message || status === "error" || status === "loading" || status === "exporting") return;
+    const t = setTimeout(() => setMessage(""), 4000);
+    return () => clearTimeout(t);
+  }, [message, status]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
       if (mod && key === "z") {
         e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
+        e.shiftKey ? redo() : undo();
         return;
       }
       if (mod && key === "y") {
@@ -317,10 +283,7 @@ export function App() {
         redo();
         return;
       }
-      if (
-        selection?.kind === "redaction" &&
-        (e.key === "Delete" || e.key === "Backspace")
-      ) {
+      if (selection?.kind === "redaction" && (e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault();
         onDelete();
       }
@@ -345,7 +308,7 @@ export function App() {
       setStatus("ready");
       setMessage(
         redactions.length > 0
-          ? "Downloaded. Redacted pages were flattened to images."
+          ? "Downloaded — redacted pages were flattened to images."
           : "Downloaded edited PDF.",
       );
     } catch (err) {
@@ -355,99 +318,69 @@ export function App() {
   }, [pdf, edits, textBoxes, redactions, fileName]);
 
   const reset = useCallback(() => {
-    if (changeCount > 0 && !confirm("Discard all changes and start over?"))
-      return;
+    if (changeCount > 0 && !confirm("Discard all changes and start over?")) return;
     setPdf(null);
     doc.reset(EMPTY_DOC);
     setSelection(null);
     setTool("select");
     setStatus("idle");
     setMessage("");
+    setMenuOpen(false);
   }, [changeCount, doc]);
 
-  const activeHint = TOOLS.find((t) => t.key === tool)?.hint ?? "";
+  const pickTool = (t: Tool) => {
+    setTool(t);
+    if (t !== "select") setSelection(null);
+  };
 
-  return (
-    <div className="app">
-      <header className="toolbar">
-        <div className="toolbar__brand">
-          <span className="toolbar__logo">✎</span>
-          <span>PDF Text Editor</span>
-        </div>
-
-        {pdf && (
-          <>
-            <div className="toolbar__group toolbar__tools">
-              {TOOLS.map((t) => (
-                <button
-                  key={t.key}
-                  className={`tool${tool === t.key ? " tool--on" : ""}`}
-                  onClick={() => {
-                    setTool(t.key);
-                    if (t.key !== "select") setSelection(null);
-                  }}
-                  title={t.hint}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="toolbar__group">
-              <button onClick={undo} disabled={!doc.canUndo} title="Undo (Ctrl+Z)">
-                ↶
-              </button>
-              <button onClick={redo} disabled={!doc.canRedo} title="Redo (Ctrl+Shift+Z)">
-                ↷
-              </button>
-            </div>
-
-            <div className="toolbar__group">
-              <button
-                onClick={() =>
-                  setScale((s) => Math.max(0.5, +(s - 0.2).toFixed(2)))
-                }
-                title="Zoom out"
-              >
-                −
-              </button>
-              <span className="toolbar__zoom">{Math.round(scale * 100)}%</span>
-              <button
-                onClick={() =>
-                  setScale((s) => Math.min(3, +(s + 0.2).toFixed(2)))
-                }
-                title="Zoom in"
-              >
-                +
-              </button>
-            </div>
-          </>
-        )}
-
-        <div className="toolbar__spacer" />
-
-        {pdf && (
-          <>
-            <span className="toolbar__status">
-              {changeCount > 0
-                ? `${changeCount} change${changeCount === 1 ? "" : "s"}`
-                : "No changes yet"}
-            </span>
-            <button
-              className="btn btn--primary"
-              onClick={download}
-              disabled={status === "exporting"}
-            >
-              {status === "exporting" ? "Exporting…" : "Download PDF"}
+  const appBar = (
+    <header className="appbar">
+      <div className="appbar__brand">
+        <span className="appbar__logo">
+          <Icon name="stylus_note" size={22} filled />
+        </span>
+        <span className="title-large appbar__name">PDF Editor</span>
+      </div>
+      {pdf && (
+        <>
+          <div className="appbar__spacer" />
+          <button className="icon-btn" onClick={undo} disabled={!doc.canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
+            <Icon name="undo" size={22} />
+          </button>
+          <button className="icon-btn" onClick={redo} disabled={!doc.canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
+            <Icon name="redo" size={22} />
+          </button>
+          <span className="appbar__changes label-medium">
+            {changeCount > 0 ? `${changeCount} change${changeCount === 1 ? "" : "s"}` : ""}
+          </span>
+          <button className="btn btn--filled appbar__download" onClick={download} disabled={status === "exporting"}>
+            <Icon name="download" size={18} />
+            <span>{status === "exporting" ? "Exporting…" : "Download"}</span>
+          </button>
+          <div className="menu">
+            <button className="icon-btn" onClick={() => setMenuOpen((v) => !v)} aria-label="More" aria-expanded={menuOpen}>
+              <Icon name="more_vert" size={22} />
             </button>
-            <button className="btn" onClick={reset}>
-              New file
-            </button>
-          </>
-        )}
-      </header>
+            {menuOpen && (
+              <>
+                <div className="menu__scrim" onClick={() => setMenuOpen(false)} />
+                <div className="menu__list" role="menu">
+                  <button className="menu__item" onClick={reset} role="menuitem">
+                    <Icon name="note_add" size={20} /> Open another PDF
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </header>
+  );
 
-      {!pdf ? (
+  if (!pdf) {
+    return (
+      <div className="app">
+        {appBar}
         <div
           className={`dropzone${dragging ? " dropzone--active" : ""}`}
           onDragOver={(e) => {
@@ -461,13 +394,23 @@ export function App() {
             const file = e.dataTransfer.files[0];
             if (file) void openFile(file);
           }}
-          onClick={() => inputRef.current?.click()}
         >
-          <div className="dropzone__icon">📄</div>
-          <h1>Drop a PDF here</h1>
-          <p>or click to browse. Everything runs in your browser — no uploads.</p>
-          {status === "loading" && <p className="dropzone__note">{message}</p>}
-          {status === "error" && <p className="dropzone__error">{message}</p>}
+          <div className="dropzone__card">
+            <div className="dropzone__icon">
+              <Icon name="picture_as_pdf" size={48} />
+            </div>
+            <h1 className="headline-small">Open a PDF to start editing</h1>
+            <p className="body-medium dropzone__sub">
+              Edit text, add notes, redact, and export — all on your device.
+              Nothing is uploaded.
+            </p>
+            <button className="btn btn--filled btn--lg" onClick={() => inputRef.current?.click()}>
+              <Icon name="upload_file" size={20} /> Choose PDF
+            </button>
+            <p className="body-small dropzone__hint">or drag &amp; drop a file here</p>
+            {status === "loading" && <p className="body-small dropzone__note">{message}</p>}
+            {status === "error" && <p className="body-small dropzone__err">{message}</p>}
+          </div>
           <input
             ref={inputRef}
             type="file"
@@ -480,37 +423,47 @@ export function App() {
             }}
           />
         </div>
-      ) : (
-        <>
-          <PropertiesPanel
-            selection={selection}
-            style={activeStyle}
-            redactionColor={redactionColor}
-            onChangeStyle={onChangeStyle}
-            onChangeRedactionColor={onChangeRedactionColor}
-            onDelete={onDelete}
-          />
-          <div className="statusbar">
-            <span className={status === "error" ? "statusbar--error" : ""}>
-              {message}
-            </span>
-            <span className="statusbar__hint">{activeHint}</span>
-          </div>
-          <main className="viewer">
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      {appBar}
+
+      <div className="workspace">
+        <nav className="toolnav" aria-label="Tools">
+          {TOOLS.map((t) => (
+            <button
+              key={t.key}
+              className={`toolnav__btn${tool === t.key ? " toolnav__btn--on" : ""}`}
+              onClick={() => pickTool(t.key)}
+              aria-pressed={tool === t.key}
+            >
+              <span className="toolnav__ind">
+                <Icon name={t.icon} size={24} filled={tool === t.key} />
+              </span>
+              <span className="toolnav__label label-medium">{t.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div
+          className="viewer"
+          ref={vp.viewportRef}
+          {...vp.handlers}
+        >
+          <div className="doc">
             {pdf.pages.map((page) => (
               <PageView
                 key={page.pageIndex}
                 bytes={pdf.bytes}
                 page={page}
-                scale={scale}
+                scale={vp.scale}
                 tool={tool}
                 edits={edits}
-                textBoxes={textBoxes.filter(
-                  (b) => b.pageIndex === page.pageIndex,
-                )}
-                redactions={redactions.filter(
-                  (r) => r.pageIndex === page.pageIndex,
-                )}
+                textBoxes={textBoxes.filter((b) => b.pageIndex === page.pageIndex)}
+                redactions={redactions.filter((r) => r.pageIndex === page.pageIndex)}
                 selection={selection}
                 autoFocusId={autoFocusId}
                 revision={revision}
@@ -523,8 +476,54 @@ export function App() {
                 onAddRedaction={onAddRedaction}
               />
             ))}
-          </main>
-        </>
+          </div>
+
+          {/* Floating zoom control */}
+          <div className="zoombar" role="group" aria-label="Zoom">
+            <button className="icon-btn" onClick={vp.zoomOut} aria-label="Zoom out">
+              <Icon name="remove" size={22} />
+            </button>
+            <button className="zoombar__label label-medium" onClick={vp.resetZoom} title="Reset to fit width">
+              {Math.round(vp.zoom * 100)}%
+            </button>
+            <button className="icon-btn" onClick={vp.zoomIn} aria-label="Zoom in">
+              <Icon name="add" size={22} />
+            </button>
+          </div>
+        </div>
+
+        {selection && (
+          <aside className="panel">
+            <PropertiesPanel
+              selection={selection}
+              style={activeStyle}
+              redactionColor={redactionColor}
+              onChangeStyle={onChangeStyle}
+              onChangeRedactionColor={onChangeRedactionColor}
+              onDelete={onDelete}
+              onClose={() => setSelection(null)}
+            />
+          </aside>
+        )}
+      </div>
+
+      {/* Mobile primary action */}
+      <button
+        className="fab"
+        onClick={download}
+        disabled={status === "exporting"}
+        aria-label="Download PDF"
+      >
+        <Icon name={status === "exporting" ? "hourglass_top" : "download"} size={24} />
+        <span className="fab__label label-large">
+          {status === "exporting" ? "Exporting…" : "Download"}
+        </span>
+      </button>
+
+      {message && (
+        <div className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}>
+          {message}
+        </div>
       )}
     </div>
   );
