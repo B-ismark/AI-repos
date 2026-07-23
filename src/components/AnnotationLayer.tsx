@@ -1,3 +1,4 @@
+import { startPointerDrag } from "../hooks/useDrag";
 import type { Annotation } from "../pdf/types";
 
 interface Props {
@@ -7,6 +8,21 @@ interface Props {
   selectedId: string | null;
   interactive: boolean;
   onSelect: (id: string) => void;
+  /** Replace an annotation's geometry (used while dragging to move it). */
+  onMove: (annot: Annotation, key: string) => void;
+}
+
+/** Shift an annotation by a delta in PDF units (origin bottom-left). */
+export function translateAnnotation(a: Annotation, dx: number, dy: number): Annotation {
+  switch (a.kind) {
+    case "line":
+    case "arrow":
+      return { ...a, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy };
+    case "pen":
+      return { ...a, pts: a.pts.map((p) => ({ x: p.x + dx, y: p.y + dy })) };
+    default:
+      return { ...a, x: a.x + dx, y: a.y + dy };
+  }
 }
 
 /** Bounding box (screen px) of an annotation, for the selection outline. */
@@ -38,27 +54,33 @@ export function AnnotationLayer({
   selectedId,
   interactive,
   onSelect,
+  onMove,
 }: Props) {
   const toX = (x: number) => x * scale;
   const toY = (y: number) => (H - y) * scale;
-  const hitProps = (id: string) =>
+  // Select on press and drag to move. Cumulative delta is applied to the
+  // annotation snapshotted at drag start (screen-down = PDF-y-down = negative).
+  let gesture = 0;
+  const beginDrag = (a: Annotation, e: React.PointerEvent) => {
+    onSelect(a.id);
+    const key = `move-an-${a.id}-${++gesture}`;
+    const start = a;
+    startPointerDrag(e, {
+      onMove: (dx, dy) => onMove(translateAnnotation(start, dx / scale, -dy / scale), key),
+    });
+  };
+  const hitProps = (a: Annotation) =>
     interactive
       ? {
-          style: { pointerEvents: "stroke" as const, cursor: "pointer" },
-          onPointerDown: (e: React.PointerEvent) => {
-            e.stopPropagation();
-            onSelect(id);
-          },
+          style: { pointerEvents: "stroke" as const, cursor: "move" },
+          onPointerDown: (e: React.PointerEvent) => beginDrag(a, e),
         }
       : { style: { pointerEvents: "none" as const } };
-  const fillHit = (id: string) =>
+  const fillHit = (a: Annotation) =>
     interactive
       ? {
-          style: { pointerEvents: "fill" as const, cursor: "pointer" },
-          onPointerDown: (e: React.PointerEvent) => {
-            e.stopPropagation();
-            onSelect(id);
-          },
+          style: { pointerEvents: "fill" as const, cursor: "move" },
+          onPointerDown: (e: React.PointerEvent) => beginDrag(a, e),
         }
       : { style: { pointerEvents: "none" as const } };
 
@@ -71,18 +93,19 @@ export function AnnotationLayer({
         if (a.kind === "highlight") {
           els.push(
             <rect key="v" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill={a.color} opacity={0.4} style={{ pointerEvents: "none" }} />,
-            <rect key="h" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill="transparent" {...fillHit(a.id)} />,
+            <rect key="h" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill="transparent" {...fillHit(a)} />,
           );
         } else if (a.kind === "rect") {
           els.push(
             <rect key="v" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill="none" stroke={a.color} strokeWidth={stroke} style={{ pointerEvents: "none" }} />,
-            <rect key="h" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill="transparent" stroke="transparent" strokeWidth={Math.max(stroke, 16)} {...hitProps(a.id)} />,
+            // Whole interior is grabbable so the box moves like a stamp.
+            <rect key="h" x={toX(a.x)} y={toY(a.y + a.height)} width={a.width * scale} height={a.height * scale} fill="transparent" {...fillHit(a)} />,
           );
         } else if (a.kind === "line" || a.kind === "arrow") {
           const x1 = toX(a.x1), y1 = toY(a.y1), x2 = toX(a.x2), y2 = toY(a.y2);
           els.push(
             <line key="v" x1={x1} y1={y1} x2={x2} y2={y2} stroke={a.color} strokeWidth={stroke} strokeLinecap="round" style={{ pointerEvents: "none" }} />,
-            <line key="h" x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(stroke, 16)} {...hitProps(a.id)} />,
+            <line key="h" x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(stroke, 16)} {...hitProps(a)} />,
           );
           if (a.kind === "arrow") {
             const L = Math.max(8, a.strokeWidth * 4) * scale;
@@ -97,7 +120,7 @@ export function AnnotationLayer({
           const pts = a.pts.map((p) => `${toX(p.x)},${toY(p.y)}`).join(" ");
           els.push(
             <polyline key="v" points={pts} fill="none" stroke={a.color} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: "none" }} />,
-            <polyline key="h" points={pts} fill="none" stroke="transparent" strokeWidth={Math.max(stroke, 16)} {...hitProps(a.id)} />,
+            <polyline key="h" points={pts} fill="none" stroke="transparent" strokeWidth={Math.max(stroke, 16)} {...hitProps(a)} />,
           );
         }
         const b = selectedId === a.id ? bbox(a, scale, H) : null;

@@ -47,6 +47,7 @@ interface Props {
   onChangeTextBox: (id: string, patch: Partial<TextBox>, key: string) => void;
   onChangeRedaction: (id: string, patch: Partial<Redaction>, key: string) => void;
   onChangeNoteText: (id: string, text: string) => void;
+  onMoveAnnotation: (annot: Annotation, key: string) => void;
   onChangeStamp: (id: string, patch: Partial<Stamp>, key: string) => void;
   onAddTextBox: (pageIndex: number, x: number, y: number) => void;
   onAddRedaction: (pageIndex: number, x: number, y: number, width: number, height: number) => void;
@@ -70,7 +71,7 @@ export function PageView(props: Props) {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
     annotations, stamps, placing, selection, autoFocusId, revision, onSelect,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction,
-    onChangeNoteText, onChangeStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
+    onChangeNoteText, onMoveAnnotation, onChangeStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
     onPlaceStamp,
   } = props;
 
@@ -206,6 +207,7 @@ export function PageView(props: Props) {
             selectedId={selection?.kind === "annotation" ? selection.id : null}
             interactive={tool === "select"}
             onSelect={(id) => onSelect({ kind: "annotation", id })}
+            onMove={onMoveAnnotation}
           />
 
           {page.fragments.map((fragment) => {

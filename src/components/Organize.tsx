@@ -129,7 +129,7 @@ export function Organize({
   return (
     <div className="organize">
       <header className="organize__bar">
-        <button className="icon-btn" onClick={onClose} aria-label="Close">
+        <button className="icon-btn" onClick={onClose} aria-label="Close" data-tip="Close">
           <Icon name="close" size={20} />
         </button>
         <span className="title-large">Organize pages</span>
@@ -180,16 +180,16 @@ export function Organize({
               </button>
               <div className="pcard__no label-medium">{i + 1}</div>
               <div className="pcard__actions">
-                <button className="icon-btn icon-btn--sm" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move earlier">
+                <button className="icon-btn icon-btn--sm" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Move earlier" data-tip="Move earlier">
                   <Icon name="chevron_left" size={16} />
                 </button>
-                <button className="icon-btn icon-btn--sm" onClick={() => rotate(i)} aria-label="Rotate">
+                <button className="icon-btn icon-btn--sm" onClick={() => rotate(i)} aria-label="Rotate" data-tip="Rotate">
                   <Icon name="rotate" size={16} />
                 </button>
-                <button className="icon-btn icon-btn--sm" onClick={() => del(i)} aria-label="Delete page">
+                <button className="icon-btn icon-btn--sm" onClick={() => del(i)} aria-label="Delete page" data-tip="Delete page">
                   <Icon name="delete" size={16} />
                 </button>
-                <button className="icon-btn icon-btn--sm" onClick={() => move(i, 1)} disabled={i === plan.length - 1} aria-label="Move later">
+                <button className="icon-btn icon-btn--sm" onClick={() => move(i, 1)} disabled={i === plan.length - 1} aria-label="Move later" data-tip="Move later">
                   <Icon name="chevron_right" size={16} />
                 </button>
               </div>

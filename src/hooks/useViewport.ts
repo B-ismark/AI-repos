@@ -33,25 +33,33 @@ export function useViewport() {
     setEl(node);
   }, []);
 
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [fitWidth, setFitWidth] = useState(0);
   const [pageWidthPts, setPageWidthPts] = useState(0);
   const [zoom, setZoom] = useState(1);
 
   const fitScale =
-    pageWidthPts > 0 && containerWidth > 0
-      ? (containerWidth - PAD * 2) / pageWidthPts
-      : 1;
+    pageWidthPts > 0 && fitWidth > 0 ? (fitWidth - PAD * 2) / pageWidthPts : 1;
   const scale = Math.max(0.05, fitScale * zoom);
 
-  // Track the container's width.
+  // The fit-to-width base is measured only when the scroll surface first
+  // mounts, when a new document loads, and on genuine window resizes — NOT on
+  // every container-width change. Opening the properties panel narrows the
+  // scroll surface, and we deliberately keep the current scale then so the
+  // page doesn't rescale-jump; it simply gains a little scroll room.
+  const measure = useCallback(() => {
+    const node = elRef.current;
+    if (node && node.clientWidth > 0) setFitWidth(node.clientWidth);
+  }, []);
   useEffect(() => {
     if (!el) return;
-    const update = () => setContainerWidth(el.clientWidth);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [el]);
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [el, measure]);
+  // Re-fit when a new document sets its page width (panel is closed then).
+  useEffect(() => {
+    measure();
+  }, [pageWidthPts, measure]);
 
   // Pending scroll anchor applied after a zoom-driven relayout. We store the
   // fraction of the scrollable extent under the anchor point (rather than a

@@ -29,7 +29,7 @@ export function DrawToolbar({ drawTool, setDrawTool, drawStyle, setDrawStyle }: 
             key={t.key}
             className={`icon-btn${drawTool === t.key ? " icon-btn--on" : ""}`}
             onClick={() => setDrawTool(t.key)}
-            title={t.label}
+            data-tip={t.label}
             aria-label={t.label}
             aria-pressed={drawTool === t.key}
           >
@@ -40,7 +40,7 @@ export function DrawToolbar({ drawTool, setDrawTool, drawStyle, setDrawStyle }: 
       <span className="drawbar__sep" />
       <ColorField small value={drawStyle.color} onChange={(c) => setDrawStyle({ ...drawStyle, color: c })} />
       {showWidth && (
-        <label className="drawbar__width" title="Stroke width">
+        <label className="drawbar__width" data-tip="Stroke width">
           <input
             type="range"
             className="slider slider--sm"
