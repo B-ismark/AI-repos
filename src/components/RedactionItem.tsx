@@ -100,6 +100,7 @@ export function RedactionItem({
   return (
     <div
       className={`redaction${redaction.cover ? " redaction--cover" : ""}${selected ? " redaction--selected" : ""}`}
+      data-el-id={redaction.id}
       style={{
         left: `${left}px`,
         top: `${top}px`,

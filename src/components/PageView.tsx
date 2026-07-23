@@ -58,6 +58,8 @@ interface Props {
   compact: boolean;
   revision: number;
   onSelect: (selection: Selection) => void;
+  /** Enter text-edit mode for a text element (double-tap on touch). */
+  onEditText: (selection: NonNullable<Selection>) => void;
   onChangeFragmentText: (id: string, text: string) => void;
   onChangeTextBoxText: (id: string, text: string) => void;
   onChangeTextBox: (id: string, patch: Partial<TextBox>, key: string) => void;
@@ -91,7 +93,7 @@ interface Gesture {
 export function PageView(props: Props) {
   const {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
-    annotations, stamps, links, formValues, multiIds, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, revision, onSelect,
+    annotations, stamps, links, formValues, multiIds, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, revision, onSelect, onEditText,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction, onChangeLink,
     onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddLink, onChangeFormValue, onMarquee, onAddAnnotation,
     onPlaceStamp,
@@ -325,6 +327,7 @@ export function PageView(props: Props) {
                 autoFocus={autoFocusId === fragment.id}
                 revision={revision}
                 onSelect={(id) => onSelect({ kind: "fragment", id })}
+                onEdit={(id) => onEditText({ kind: "fragment", id })}
                 onChangeText={onChangeFragmentText}
               />
             );
@@ -346,6 +349,7 @@ export function PageView(props: Props) {
               autoFocus={autoFocusId === n.id}
               revision={revision}
               onSelect={(id) => onSelect({ kind: "annotation", id })}
+              onEdit={(id) => onEditText({ kind: "annotation", id })}
               onChangeText={onChangeNoteText}
             />
           ))}
@@ -363,6 +367,7 @@ export function PageView(props: Props) {
               autoFocus={autoFocusId === box.id}
               revision={revision}
               onSelect={(id) => onSelect({ kind: "textbox", id })}
+              onEdit={(id) => onEditText({ kind: "textbox", id })}
               onChangeText={onChangeTextBoxText}
               onChange={onChangeTextBox}
             />
