@@ -867,6 +867,103 @@ export function App() {
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  // ---- Duplicate / copy-paste of overlay objects ----
+  type ClipItem =
+    | { kind: "textbox"; obj: TextBox }
+    | { kind: "redaction"; obj: Redaction }
+    | { kind: "annotation"; obj: Annotation }
+    | { kind: "stamp"; obj: Stamp }
+    | { kind: "link"; obj: LinkAnnot };
+  const clipboard = useRef<ClipItem | null>(null);
+
+  const selectedClip = useCallback((): ClipItem | null => {
+    if (!selection) return null;
+    if (selection.kind === "textbox") {
+      const obj = textBoxes.find((b) => b.id === selection.id);
+      return obj ? { kind: "textbox", obj } : null;
+    }
+    if (selection.kind === "redaction") {
+      const obj = redactions.find((r) => r.id === selection.id);
+      return obj ? { kind: "redaction", obj } : null;
+    }
+    if (selection.kind === "annotation") {
+      const obj = annotations.find((a) => a.id === selection.id);
+      return obj ? { kind: "annotation", obj } : null;
+    }
+    if (selection.kind === "stamp") {
+      const obj = stamps.find((s) => s.id === selection.id);
+      return obj ? { kind: "stamp", obj } : null;
+    }
+    if (selection.kind === "link") {
+      const obj = links.find((l) => l.id === selection.id);
+      return obj ? { kind: "link", obj } : null;
+    }
+    return null;
+  }, [selection, textBoxes, redactions, annotations, stamps, links]);
+
+  /** Add a copy of a clipboard item, offset slightly, and select it. */
+  const pasteItem = useCallback(
+    (item: ClipItem) => {
+      const dx = 12;
+      const dy = -12;
+      if (item.kind === "textbox") {
+        const id = nextId("tb");
+        const b = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
+        doc.set((d) => ({ ...d, textBoxes: [...d.textBoxes, b] }));
+        setSelection({ kind: "textbox", id });
+      } else if (item.kind === "redaction") {
+        const id = nextId("rd");
+        const r = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
+        doc.set((d) => ({ ...d, redactions: [...d.redactions, r] }));
+        setSelection({ kind: "redaction", id });
+      } else if (item.kind === "link") {
+        const id = nextId("ln");
+        const l = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
+        doc.set((d) => ({ ...d, links: [...(d.links ?? []), l] }));
+        setSelection({ kind: "link", id });
+      } else if (item.kind === "stamp") {
+        const id = nextId("st");
+        const s = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
+        doc.set((d) => ({ ...d, stamps: [...d.stamps, s] }));
+        setSelection({ kind: "stamp", id });
+      } else {
+        const id = nextId("an");
+        const a = { ...translateAnnotation(item.obj, dx, dy), id } as Annotation;
+        doc.set((d) => ({ ...d, annotations: [...d.annotations, a] }));
+        setSelection({ kind: "annotation", id });
+      }
+    },
+    [doc],
+  );
+
+  const duplicateSelection = useCallback(() => {
+    const item = selectedClip();
+    if (item) pasteItem(item);
+  }, [selectedClip, pasteItem]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || isTypingTarget()) return;
+      const key = e.key.toLowerCase();
+      if (key === "d") {
+        if (!selection) return;
+        e.preventDefault();
+        duplicateSelection();
+      } else if (key === "c") {
+        const item = selectedClip();
+        if (!item) return;
+        e.preventDefault();
+        clipboard.current = structuredClone(item);
+      } else if (key === "v") {
+        if (!clipboard.current) return;
+        e.preventDefault();
+        pasteItem(clipboard.current);
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [selection, selectedClip, pasteItem, duplicateSelection]);
+
   // Move focus into the overflow menu when it opens (ARIA menu pattern).
   useEffect(() => {
     if (!menuOpen) return;
@@ -1609,6 +1706,7 @@ export function App() {
               { id: "redact", label: "Redact", hint: "R", icon: "select", run: () => pickTool("redact") },
               { id: "whiteout", label: "Whiteout", hint: "W", icon: "eraser", run: () => pickTool("whiteout") },
               { id: "link", label: "Add link", hint: "L", icon: "link", run: () => pickTool("link") },
+              { id: "duplicate", label: "Duplicate selection", hint: "Ctrl+D", icon: "duplicate", disabled: !selection || selection.kind === "fragment", run: duplicateSelection },
               { id: "find", label: "Find in document", hint: "Ctrl+F", icon: "search", run: openFind },
               { id: "pages", label: "Toggle page thumbnails", icon: "panel", run: () => setNavOpen((v) => !v) },
               { id: "undo", label: "Undo", hint: "Ctrl+Z", icon: "undo", disabled: !doc.canUndo, run: undo },
