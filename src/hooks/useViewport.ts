@@ -10,6 +10,10 @@ import { dragState } from "./useDrag";
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 6;
 const PAD = 24; // px of breathing room around the page at fit-width
+// On Expanded (>=840dp) windows, cap the fit-to-width page column so a single
+// page doesn't balloon to an awkward size on a wide monitor; the extra room
+// becomes centred margin instead. (audit #9 / M-2)
+const MAX_FIT_WIDTH = 1100;
 
 /**
  * Viewport zoom controller (research "Model B": native scroll + app-managed
@@ -37,8 +41,9 @@ export function useViewport() {
   const [pageWidthPts, setPageWidthPts] = useState(0);
   const [zoom, setZoom] = useState(1);
 
+  const effectiveWidth = Math.min(fitWidth, MAX_FIT_WIDTH);
   const fitScale =
-    pageWidthPts > 0 && fitWidth > 0 ? (fitWidth - PAD * 2) / pageWidthPts : 1;
+    pageWidthPts > 0 && fitWidth > 0 ? (effectiveWidth - PAD * 2) / pageWidthPts : 1;
   const scale = Math.max(0.05, fitScale * zoom);
 
   // The fit-to-width base is measured only when the scroll surface first

@@ -20,6 +20,7 @@ import { useHistory } from "./hooks/useHistory";
 import { usePersistentState } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
+import { useMediaQuery } from "./hooks/useMediaQuery";
 import { loadPdf } from "./pdf/loader";
 import { exportPdf, isFragmentModified } from "./pdf/exporter";
 import { DEFAULT_STYLE, resolveFragmentStyle } from "./pdf/style";
@@ -137,6 +138,11 @@ export function App() {
 
   const vp = useViewport();
   const theme = useTheme();
+  // >=600px gets the persistent side panel + tool rail (Material Medium+).
+  const isWide = useMediaQuery("(min-width: 600px)");
+  // The mobile properties sheet covers the bottom of the screen; hide the
+  // floating zoom bar + FAB while it's open to declutter the thumb zone.
+  const sheetOpen = !isWide && !!selection;
   const themeIcon =
     theme.mode === "light" ? "light_mode" : theme.mode === "dark" ? "dark_mode" : "system_mode";
   const themeLabel =
@@ -905,6 +911,21 @@ export function App() {
     </header>
   );
 
+  const propertiesPanel = (
+    <PropertiesPanel
+      selection={selection}
+      style={activeStyle}
+      redactionColor={redactionColor}
+      annotation={selectedAnnotation}
+      onChangeStyle={onChangeStyle}
+      onChangeRedactionColor={onChangeRedactionColor}
+      onChangeAnnotation={onChangeAnnotation}
+      onDelete={onDelete}
+      onReset={onResetStyle}
+      onClose={() => setSelection(null)}
+    />
+  );
+
   if (!pdf) {
     return (
       <div className="app">
@@ -1021,7 +1042,9 @@ export function App() {
             </div>
           </div>
 
-          {/* Pinned zoom control (bottom-right, does not scroll) */}
+          {/* Pinned zoom control (bottom-right, does not scroll) — hidden
+              while the mobile properties sheet covers the bottom. */}
+          {!sheetOpen && (
           <div className="zoombar" role="group" aria-label="Zoom">
             <button className="icon-btn" onClick={vp.zoomOut} aria-label="Zoom out" data-tip="Zoom out">
               <Icon name="remove" size={18} />
@@ -1033,6 +1056,7 @@ export function App() {
               <Icon name="add" size={18} />
             </button>
           </div>
+          )}
 
           {tool === "draw" && (
             <DrawToolbar
@@ -1044,40 +1068,35 @@ export function App() {
           )}
         </div>
 
-        {selection && (
-          <>
-            {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
-            <div className="scrim" onPointerDown={() => setSelection(null)} />
-            <aside className="panel">
-              <PropertiesPanel
-                selection={selection}
-                style={activeStyle}
-                redactionColor={redactionColor}
-                annotation={selectedAnnotation}
-                onChangeStyle={onChangeStyle}
-                onChangeRedactionColor={onChangeRedactionColor}
-                onChangeAnnotation={onChangeAnnotation}
-                onDelete={onDelete}
-                onReset={onResetStyle}
-                onClose={() => setSelection(null)}
-              />
-            </aside>
-          </>
+        {isWide ? (
+          /* Desktop/tablet: a persistent side panel (shows an empty state
+             when nothing is selected) so the layout doesn't shift. */
+          <aside className="panel">{propertiesPanel}</aside>
+        ) : (
+          selection && (
+            <>
+              {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
+              <div className="scrim" onPointerDown={() => setSelection(null)} />
+              <aside className="panel">{propertiesPanel}</aside>
+            </>
+          )
         )}
       </div>
 
-      {/* Mobile primary action */}
-      <button
-        className="fab"
-        onClick={download}
-        disabled={status === "exporting"}
-        aria-label="Download PDF"
-      >
-        <Icon name={status === "exporting" ? "hourglass_top" : "download"} size={20} />
-        <span className="fab__label label-large">
-          {status === "exporting" ? "Exporting…" : "Download"}
-        </span>
-      </button>
+      {/* Mobile primary action (hidden while the properties sheet is open) */}
+      {!sheetOpen && (
+        <button
+          className="fab"
+          onClick={download}
+          disabled={status === "exporting"}
+          aria-label="Download PDF"
+        >
+          <Icon name={status === "exporting" ? "hourglass_top" : "download"} size={20} />
+          <span className="fab__label label-large">
+            {status === "exporting" ? "Exporting…" : "Download"}
+          </span>
+        </button>
+      )}
 
       {/* Persistent, visually-hidden live regions guarantee the status is
           announced by assistive tech even though the visible snackbar mounts

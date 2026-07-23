@@ -1081,3 +1081,14 @@ body {
   .appbar__name { display: none; }
   .organize__btnlabel { display: none; }
 }
+
+/* ============ Expanded window (>=840px): roomier side panel + page column.
+   Material's Expanded size class; pairs with the fit-to-width cap in
+   useViewport so a single page doesn't balloon on wide monitors. ============ */
+@media (min-width: 840px) {
+  .panel { width: 320px; }
+  .doc { gap: 24px; padding: 24px; }
+  .organize__grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+}
