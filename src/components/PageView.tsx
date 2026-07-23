@@ -40,6 +40,10 @@ interface Props {
   placing: boolean;
   selection: Selection;
   autoFocusId: string | null;
+  /** Id of the element currently in text-edit mode (mobile), or null. */
+  editingId: string | null;
+  /** Compact (phone) layout — gates mobile-only edit behaviour. */
+  compact: boolean;
   revision: number;
   onSelect: (selection: Selection) => void;
   onChangeFragmentText: (id: string, text: string) => void;
@@ -70,7 +74,7 @@ interface Gesture {
 export function PageView(props: Props) {
   const {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
-    annotations, stamps, placing, selection, autoFocusId, revision, onSelect,
+    annotations, stamps, placing, selection, autoFocusId, editingId, compact, revision, onSelect,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction,
     onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
     onPlaceStamp,
@@ -253,6 +257,8 @@ export function PageView(props: Props) {
                 modified={modified}
                 selected={selected}
                 interactive={tool === "select"}
+                editing={!compact || editingId === fragment.id}
+                autoFocus={autoFocusId === fragment.id}
                 revision={revision}
                 onSelect={(id) => onSelect({ kind: "fragment", id })}
                 onChangeText={onChangeFragmentText}
@@ -272,6 +278,7 @@ export function PageView(props: Props) {
               pageHeight={H}
               selected={selection?.kind === "annotation" && selection.id === n.id}
               interactive={tool === "select"}
+              editing={!compact || editingId === n.id}
               autoFocus={autoFocusId === n.id}
               revision={revision}
               onSelect={(id) => onSelect({ kind: "annotation", id })}
@@ -287,6 +294,7 @@ export function PageView(props: Props) {
               pageHeight={H}
               selected={selection?.kind === "textbox" && selection.id === box.id}
               interactive={tool === "select"}
+              editing={!compact || editingId === box.id}
               autoFocus={autoFocusId === box.id}
               revision={revision}
               onSelect={(id) => onSelect({ kind: "textbox", id })}

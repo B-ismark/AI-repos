@@ -11,6 +11,7 @@ interface Props {
   pageHeight: number;
   selected: boolean;
   interactive: boolean;
+  editing: boolean;
   autoFocus: boolean;
   revision: number;
   onSelect: (id: string) => void;
@@ -45,6 +46,7 @@ function NoteItemImpl({
   pageHeight,
   selected,
   interactive,
+  editing,
   autoFocus,
   revision,
   onSelect,
@@ -63,6 +65,7 @@ function NoteItemImpl({
       const sel = window.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(r);
+      ref.current.scrollIntoView({ block: "center", inline: "nearest" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revision]);
@@ -71,7 +74,7 @@ function NoteItemImpl({
     <div
       ref={ref}
       className={`note${selected ? " note--sel" : ""}`}
-      contentEditable={interactive}
+      contentEditable={interactive && editing}
       suppressContentEditableWarning
       spellCheck={false}
       data-placeholder="Note…"
