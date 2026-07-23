@@ -465,18 +465,29 @@ export function App() {
         const baked = await bakeCurrent();
         const { compressPdf } = await import("./pdf/finishOps");
         const sizes = pdf.pages.map((p) => ({ width: p.viewBox.width, height: p.viewBox.height }));
-        const out = await compressPdf(baked, sizes, opts);
-        const before = pdf.bytes.byteLength;
-        const after = out.byteLength;
-        downloadBytes(out, fileName.replace(/\.pdf$/i, "") + "-compressed.pdf");
-        setStatus("ready");
-        const pct = Math.round((1 - after / before) * 100);
-        const fmt = (n: number) => (n / 1_000_000).toFixed(2) + " MB";
-        setMessage(
-          pct > 0
-            ? `Compressed — ${fmt(before)} → ${fmt(after)} (${pct}% smaller).`
-            : `Compressed to ${fmt(after)}.`,
+        const compressed = await compressPdf(baked, sizes, opts);
+        const before = baked.byteLength;
+        const after = compressed.byteLength;
+        // Rasterising a text/vector PDF can produce a *larger* file than the
+        // original. Keep whichever is smaller so "compress" never hands back a
+        // bigger download, and be honest about which one we kept.
+        const helped = after < before;
+        const base = fileName.replace(/\.pdf$/i, "");
+        downloadBytes(
+          helped ? compressed : new Uint8Array(baked),
+          base + (helped ? "-compressed.pdf" : ".pdf"),
         );
+        setStatus("ready");
+        const fmt = (n: number) =>
+          n < 1_000_000 ? Math.round(n / 1000) + " KB" : (n / 1_000_000).toFixed(2) + " MB";
+        if (helped) {
+          const pct = Math.round((1 - after / before) * 100);
+          setMessage(`Compressed — ${fmt(before)} → ${fmt(after)} (${pct}% smaller).`);
+        } else {
+          setMessage(
+            `Already compact — kept the original ${fmt(before)} (rasterising would've grown it to ${fmt(after)}).`,
+          );
+        }
       } catch {
         setStatus("error");
         setMessage("Couldn't compress this PDF. Please try again.");
