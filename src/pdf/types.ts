@@ -80,6 +80,13 @@ export interface Redaction {
   color: string;
 }
 
+/** The full editable document state tracked by the undo/redo history. */
+export interface DocState {
+  edits: Edits;
+  textBoxes: TextBox[];
+  redactions: Redaction[];
+}
+
 /** Active editing tool. */
 export type Tool = "select" | "text" | "redact";
 

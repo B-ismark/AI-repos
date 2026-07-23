@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageView } from "./components/PageView";
 import { PropertiesPanel } from "./components/PropertiesPanel";
+import { useHistory } from "./hooks/useHistory";
 import { loadPdf } from "./pdf/loader";
 import { exportPdf, isFragmentModified } from "./pdf/exporter";
 import { DEFAULT_STYLE, resolveFragmentStyle } from "./pdf/style";
 import type {
-  Edits,
+  DocState,
   LoadedPdf,
   Redaction,
   Selection,
@@ -17,8 +18,10 @@ import type {
 
 type Status = "idle" | "loading" | "ready" | "exporting" | "error";
 
+const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [] };
+
 const TOOLS: { key: Tool; label: string; hint: string }[] = [
-  { key: "select", label: "Select", hint: "Click text to edit and restyle it" },
+  { key: "select", label: "Select", hint: "Click text to edit, restyle, drag, or resize it" },
   { key: "text", label: "Add text", hint: "Click on the page to drop a text box" },
   { key: "redact", label: "Redact", hint: "Drag to permanently black out a region" },
 ];
@@ -27,11 +30,12 @@ export function App() {
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
   const [fileName, setFileName] = useState("document.pdf");
   const [tool, setTool] = useState<Tool>("select");
-  const [edits, setEdits] = useState<Edits>({});
-  const [textBoxes, setTextBoxes] = useState<TextBox[]>([]);
-  const [redactions, setRedactions] = useState<Redaction[]>([]);
+  const doc = useHistory<DocState>(EMPTY_DOC);
+  const { edits, textBoxes, redactions } = doc.state;
   const [selection, setSelection] = useState<Selection>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
+  // Bumped on undo/redo/load so imperatively-managed editable text re-seeds.
+  const [revision, setRevision] = useState(0);
   const [scale, setScale] = useState(1.4);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
@@ -40,7 +44,6 @@ export function App() {
   const counter = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${counter.current++}`;
 
-  // Fast lookup of a fragment by id across all pages.
   const fragmentById = useMemo(() => {
     const map = new Map<string, TextFragment>();
     pdf?.pages.forEach((p) => p.fragments.forEach((f) => map.set(f.id, f)));
@@ -59,46 +62,94 @@ export function App() {
   const changeCount =
     editedFragmentCount + textBoxes.length + redactions.length;
 
-  const openFile = useCallback(async (file: File) => {
-    if (file.type && file.type !== "application/pdf") {
-      setStatus("error");
-      setMessage(`"${file.name}" is not a PDF.`);
-      return;
-    }
-    setStatus("loading");
-    setMessage(`Loading ${file.name}…`);
-    try {
-      const bytes = await file.arrayBuffer();
-      const loaded = await loadPdf(bytes);
-      setPdf(loaded);
-      setFileName(file.name);
-      setEdits({});
-      setTextBoxes([]);
-      setRedactions([]);
-      setSelection(null);
-      setTool("select");
-      setStatus("ready");
-      const total = loaded.pages.reduce((n, p) => n + p.fragments.length, 0);
-      setMessage(`${loaded.pages.length} page(s), ${total} text fragments.`);
-    } catch (err) {
-      setStatus("error");
-      setMessage(`Could not open PDF: ${String(err)}`);
-    }
-  }, []);
+  const openFile = useCallback(
+    async (file: File) => {
+      if (file.type && file.type !== "application/pdf") {
+        setStatus("error");
+        setMessage(`"${file.name}" is not a PDF.`);
+        return;
+      }
+      setStatus("loading");
+      setMessage(`Loading ${file.name}…`);
+      try {
+        const bytes = await file.arrayBuffer();
+        const loaded = await loadPdf(bytes);
+        setPdf(loaded);
+        setFileName(file.name);
+        doc.reset(EMPTY_DOC);
+        setSelection(null);
+        setTool("select");
+        setRevision((r) => r + 1);
+        setStatus("ready");
+        const total = loaded.pages.reduce((n, p) => n + p.fragments.length, 0);
+        setMessage(`${loaded.pages.length} page(s), ${total} text fragments.`);
+      } catch (err) {
+        setStatus("error");
+        setMessage(`Could not open PDF: ${String(err)}`);
+      }
+    },
+    [doc],
+  );
 
-  const onChangeFragmentText = useCallback((id: string, text: string) => {
-    setEdits((prev) => ({
-      ...prev,
-      [id]: { text, style: prev[id]?.style ?? {} },
-    }));
-  }, []);
+  // ---- Text edits ----
+  const onChangeFragmentText = useCallback(
+    (id: string, text: string) => {
+      doc.set(
+        (d) => ({
+          ...d,
+          edits: { ...d.edits, [id]: { text, style: d.edits[id]?.style ?? {} } },
+        }),
+        `ftext-${id}`,
+      );
+    },
+    [doc],
+  );
 
-  const onChangeTextBoxText = useCallback((id: string, text: string) => {
-    setTextBoxes((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, text } : b)),
-    );
-  }, []);
+  const onChangeTextBoxText = useCallback(
+    (id: string, text: string) => {
+      doc.set(
+        (d) => ({
+          ...d,
+          textBoxes: d.textBoxes.map((b) => (b.id === id ? { ...b, text } : b)),
+        }),
+        `btext-${id}`,
+      );
+    },
+    [doc],
+  );
 
+  // ---- Geometry (drag / resize) ----
+  const onChangeTextBox = useCallback(
+    (id: string, patch: Partial<TextBox>, key: string) => {
+      doc.set(
+        (d) => ({
+          ...d,
+          textBoxes: d.textBoxes.map((b) =>
+            b.id === id ? { ...b, ...patch } : b,
+          ),
+        }),
+        key,
+      );
+    },
+    [doc],
+  );
+
+  const onChangeRedaction = useCallback(
+    (id: string, patch: Partial<Redaction>, key: string) => {
+      doc.set(
+        (d) => ({
+          ...d,
+          redactions: d.redactions.map((r) =>
+            r.id === id ? { ...r, ...patch } : r,
+          ),
+        }),
+        key,
+      );
+    },
+    [doc],
+  );
+
+  // ---- Adding ----
   const onAddTextBox = useCallback(
     (pageIndex: number, x: number, y: number) => {
       const id = nextId("tb");
@@ -110,25 +161,28 @@ export function App() {
         text: "",
         style: { ...DEFAULT_STYLE },
       };
-      setTextBoxes((prev) => [...prev, box]);
+      doc.set((d) => ({ ...d, textBoxes: [...d.textBoxes, box] }));
       setTool("select");
       setSelection({ kind: "textbox", id });
       setAutoFocusId(id);
     },
-    [],
+    [doc],
   );
 
   const onAddRedaction = useCallback(
     (pageIndex: number, x: number, y: number, width: number, height: number) => {
       const id = nextId("rd");
-      setRedactions((prev) => [
-        ...prev,
-        { id, pageIndex, x, y, width, height, color: "#000000" },
-      ]);
+      doc.set((d) => ({
+        ...d,
+        redactions: [
+          ...d.redactions,
+          { id, pageIndex, x, y, width, height, color: "#000000" },
+        ],
+      }));
       setTool("select");
       setSelection({ kind: "redaction", id });
     },
-    [],
+    [doc],
   );
 
   const onSelect = useCallback((sel: Selection) => {
@@ -136,7 +190,7 @@ export function App() {
     setSelection(sel);
   }, []);
 
-  // Style of the currently selected text element (fragment or text box).
+  // ---- Styling ----
   const activeStyle: TextStyle | null = useMemo(() => {
     if (selection?.kind === "fragment") {
       const f = fragmentById.get(selection.id);
@@ -155,60 +209,125 @@ export function App() {
 
   const onChangeStyle = useCallback(
     (patch: Partial<TextStyle>) => {
-      if (selection?.kind === "fragment") {
+      if (!selection) return;
+      // Colour sweeps coalesce into one undo step; discrete toggles don't.
+      const onlyColour =
+        Object.keys(patch).length === 1 && patch.color !== undefined;
+      const key = onlyColour
+        ? `color-${selection.kind}-${selection.id}`
+        : undefined;
+
+      if (selection.kind === "fragment") {
         const id = selection.id;
-        setEdits((prev) => {
+        doc.set((d) => {
           const f = fragmentById.get(id);
-          const prevEntry = prev[id] ?? { text: f?.original ?? "", style: {} };
+          const prev = d.edits[id] ?? { text: f?.original ?? "", style: {} };
           return {
-            ...prev,
-            [id]: { ...prevEntry, style: { ...prevEntry.style, ...patch } },
+            ...d,
+            edits: { ...d.edits, [id]: { ...prev, style: { ...prev.style, ...patch } } },
           };
-        });
-      } else if (selection?.kind === "textbox") {
+        }, key);
+      } else if (selection.kind === "textbox") {
         const id = selection.id;
-        setTextBoxes((prev) =>
-          prev.map((b) =>
-            b.id === id ? { ...b, style: { ...b.style, ...patch } } : b,
-          ),
+        doc.set(
+          (d) => ({
+            ...d,
+            textBoxes: d.textBoxes.map((b) =>
+              b.id === id ? { ...b, style: { ...b.style, ...patch } } : b,
+            ),
+          }),
+          key,
         );
       }
     },
-    [selection, fragmentById],
+    [selection, fragmentById, doc],
   );
 
   const onChangeRedactionColor = useCallback(
     (color: string) => {
       if (selection?.kind !== "redaction") return;
-      setRedactions((prev) =>
-        prev.map((r) => (r.id === selection.id ? { ...r, color } : r)),
+      const id = selection.id;
+      doc.set(
+        (d) => ({
+          ...d,
+          redactions: d.redactions.map((r) =>
+            r.id === id ? { ...r, color } : r,
+          ),
+        }),
+        `rcolor-${id}`,
       );
     },
-    [selection],
+    [selection, doc],
   );
 
   const onDelete = useCallback(() => {
     if (selection?.kind === "textbox") {
-      setTextBoxes((prev) => prev.filter((b) => b.id !== selection.id));
+      const id = selection.id;
+      doc.set((d) => ({
+        ...d,
+        textBoxes: d.textBoxes.filter((b) => b.id !== id),
+      }));
       setSelection(null);
     } else if (selection?.kind === "redaction") {
-      setRedactions((prev) => prev.filter((r) => r.id !== selection.id));
+      const id = selection.id;
+      doc.set((d) => ({
+        ...d,
+        redactions: d.redactions.filter((r) => r.id !== id),
+      }));
       setSelection(null);
     }
-  }, [selection]);
+  }, [selection, doc]);
 
-  // Delete/Backspace removes a selected redaction (which has no text editor).
+  // ---- Undo / redo ----
+  const undo = useCallback(() => {
+    doc.undo();
+    setRevision((r) => r + 1);
+  }, [doc]);
+
+  const redo = useCallback(() => {
+    doc.redo();
+    setRevision((r) => r + 1);
+  }, [doc]);
+
+  // Drop a selection that no longer exists after an undo/redo.
+  useEffect(() => {
+    if (selection?.kind === "textbox" && !textBoxes.some((b) => b.id === selection.id)) {
+      setSelection(null);
+    } else if (
+      selection?.kind === "redaction" &&
+      !redactions.some((r) => r.id === selection.id)
+    ) {
+      setSelection(null);
+    }
+  }, [textBoxes, redactions, selection]);
+
+  // Keyboard: undo/redo, and Delete for a selected redaction.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (selection?.kind !== "redaction") return;
-      if (e.key === "Delete" || e.key === "Backspace") {
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && key === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (
+        selection?.kind === "redaction" &&
+        (e.key === "Delete" || e.key === "Backspace")
+      ) {
         e.preventDefault();
         onDelete();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection, onDelete]);
+  }, [selection, onDelete, undo, redo]);
 
   const download = useCallback(async () => {
     if (!pdf) return;
@@ -239,14 +358,12 @@ export function App() {
     if (changeCount > 0 && !confirm("Discard all changes and start over?"))
       return;
     setPdf(null);
-    setEdits({});
-    setTextBoxes([]);
-    setRedactions([]);
+    doc.reset(EMPTY_DOC);
     setSelection(null);
     setTool("select");
     setStatus("idle");
     setMessage("");
-  }, [changeCount]);
+  }, [changeCount, doc]);
 
   const activeHint = TOOLS.find((t) => t.key === tool)?.hint ?? "";
 
@@ -274,6 +391,15 @@ export function App() {
                   {t.label}
                 </button>
               ))}
+            </div>
+
+            <div className="toolbar__group">
+              <button onClick={undo} disabled={!doc.canUndo} title="Undo (Ctrl+Z)">
+                ↶
+              </button>
+              <button onClick={redo} disabled={!doc.canRedo} title="Redo (Ctrl+Shift+Z)">
+                ↷
+              </button>
             </div>
 
             <div className="toolbar__group">
@@ -387,9 +513,12 @@ export function App() {
                 )}
                 selection={selection}
                 autoFocusId={autoFocusId}
+                revision={revision}
                 onSelect={onSelect}
                 onChangeFragmentText={onChangeFragmentText}
                 onChangeTextBoxText={onChangeTextBoxText}
+                onChangeTextBox={onChangeTextBox}
+                onChangeRedaction={onChangeRedaction}
                 onAddTextBox={onAddTextBox}
                 onAddRedaction={onAddRedaction}
               />

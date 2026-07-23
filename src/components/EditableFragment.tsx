@@ -15,6 +15,8 @@ interface Props {
   selected: boolean;
   /** Only interactive (clickable/editable) in the Select tool. */
   interactive: boolean;
+  /** Bumps on undo/redo so the editable text is re-seeded from state. */
+  revision: number;
   onSelect: (id: string) => void;
   onChangeText: (id: string, text: string) => void;
 }
@@ -33,15 +35,19 @@ function EditableFragmentImpl({
   modified,
   selected,
   interactive,
+  revision,
   onSelect,
   onChangeText,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Seed on mount, and re-seed when an undo/redo changes the stored text.
   useEffect(() => {
-    if (ref.current) ref.current.textContent = value;
+    if (ref.current && ref.current.textContent !== value) {
+      ref.current.textContent = value;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [revision]);
 
   const [, , c, d, e, f] = fragment.transform;
   const show = modified || selected;

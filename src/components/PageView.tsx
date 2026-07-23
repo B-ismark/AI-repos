@@ -24,9 +24,17 @@ interface Props {
   redactions: Redaction[];
   selection: Selection;
   autoFocusId: string | null;
+  /** Bumps on undo/redo so editable text is re-seeded from state. */
+  revision: number;
   onSelect: (selection: Selection) => void;
   onChangeFragmentText: (id: string, text: string) => void;
   onChangeTextBoxText: (id: string, text: string) => void;
+  onChangeTextBox: (id: string, patch: Partial<TextBox>, key: string) => void;
+  onChangeRedaction: (
+    id: string,
+    patch: Partial<Redaction>,
+    key: string,
+  ) => void;
   onAddTextBox: (pageIndex: number, x: number, y: number) => void;
   onAddRedaction: (
     pageIndex: number,
@@ -52,9 +60,12 @@ export function PageView(props: Props) {
     redactions,
     selection,
     autoFocusId,
+    revision,
     onSelect,
     onChangeFragmentText,
     onChangeTextBoxText,
+    onChangeTextBox,
+    onChangeRedaction,
     onAddTextBox,
     onAddRedaction,
   } = props;
@@ -166,6 +177,7 @@ export function PageView(props: Props) {
                 modified={modified}
                 selected={selected}
                 interactive={tool === "select"}
+                revision={revision}
                 onSelect={(id) => onSelect({ kind: "fragment", id })}
                 onChangeText={onChangeFragmentText}
               />
@@ -181,8 +193,10 @@ export function PageView(props: Props) {
               selected={selection?.kind === "textbox" && selection.id === box.id}
               interactive={tool === "select"}
               autoFocus={autoFocusId === box.id}
+              revision={revision}
               onSelect={(id) => onSelect({ kind: "textbox", id })}
               onChangeText={onChangeTextBoxText}
+              onChange={onChangeTextBox}
             />
           ))}
 
@@ -195,6 +209,7 @@ export function PageView(props: Props) {
               selected={selection?.kind === "redaction" && selection.id === r.id}
               interactive={tool === "select"}
               onSelect={(id) => onSelect({ kind: "redaction", id })}
+              onChange={onChangeRedaction}
             />
           ))}
 

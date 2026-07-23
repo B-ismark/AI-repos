@@ -12,8 +12,14 @@ no uploads, no accounts.
 - **Restyle text** — change font (Sans / Serif / Mono), **bold**, *italic*,
   size, and colour for the selected text or text box.
 - **Add new text** — the *Add text* tool drops a text box anywhere you click.
+- **Move & resize** — drag text boxes and redactions to reposition them, and
+  drag their handles to resize (redactions resize as a rectangle; text boxes
+  scale their font size).
 - **Redact** — the *Redact* tool draws a solid box over a region and truly
   removes the underlying content on export (see below).
+- **Undo / redo** — full history with <kbd>Ctrl/⌘</kbd>+<kbd>Z</kbd> and
+  <kbd>Ctrl/⌘</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> (continuous gestures like
+  dragging, resizing, and typing collapse into single steps).
 - **Download** — writes your changes back to a new PDF, preserving everything
   you didn't touch.
 
@@ -51,9 +57,12 @@ Then open the printed URL and drop in a PDF.
 
 | Tool | What it does |
 | --- | --- |
-| **Select** | Click text to edit it; use the properties bar to restyle. Click a text box or redaction to select it (Delete removes it). |
+| **Select** | Click text to edit it; use the properties bar to restyle. Click a text box or redaction to select it, then drag it to move or drag a handle to resize. Delete removes the selected text box/redaction. |
 | **Add text** | Click anywhere on a page to drop a new text box, then type. |
 | **Redact** | Drag a rectangle over the content to remove. Pick its fill colour in the properties bar. |
+
+Undo/redo is available from the toolbar (↶ ↷) or the keyboard
+(<kbd>Ctrl/⌘</kbd>+<kbd>Z</kbd> / <kbd>Ctrl/⌘</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>).
 
 ## Project layout
 
@@ -64,11 +73,14 @@ src/
     style.ts      font/style resolution + colour helpers
     loader.ts     parse + render pages with PDF.js
     exporter.ts   write edits/text/redactions back with pdf-lib
+  hooks/
+    useHistory.ts undo/redo stack with gesture coalescing
+    useDrag.ts    pointer-drag helper for move/resize
   components/
     PageView.tsx          one page: canvas + editable overlay + tools
     EditableFragment.tsx  a single in-place editable text run
-    TextBoxItem.tsx       a user-added text box
-    RedactionItem.tsx     a redaction rectangle
+    TextBoxItem.tsx       a user-added text box (draggable/resizable)
+    RedactionItem.tsx     a redaction rectangle (draggable/resizable)
     PropertiesPanel.tsx   contextual font/colour/size controls
   App.tsx         upload, toolbar, viewer, download orchestration
 ```

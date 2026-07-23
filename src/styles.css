@@ -396,8 +396,12 @@ body {
 }
 
 /* ---- User-added text boxes ---- */
-.textbox {
+.tb-wrap {
   position: absolute;
+}
+
+.textbox {
+  display: inline-block;
   white-space: nowrap;
   outline: none;
   cursor: text;
@@ -413,8 +417,33 @@ body {
   opacity: 0.4;
 }
 
-.textbox--selected {
+.tb-wrap--selected .textbox {
   box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+.tb-move {
+  position: absolute;
+  left: 0;
+  top: -16px;
+  width: 20px;
+  height: 13px;
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  cursor: move;
+}
+
+.tb-move::after {
+  content: "✥";
+  display: block;
+  color: #fff;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+}
+
+.tb-resize {
+  left: 100%;
+  top: 100%;
 }
 
 /* ---- Redactions ---- */
@@ -431,4 +460,17 @@ body {
   background: rgba(0, 0, 0, 0.55);
   border: 1px dashed #fff;
   pointer-events: none;
+}
+
+/* ---- Drag/resize handles ---- */
+.handle {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  z-index: 2;
 }
