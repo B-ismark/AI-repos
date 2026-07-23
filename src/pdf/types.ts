@@ -80,19 +80,50 @@ export interface Redaction {
   color: string;
 }
 
+/** Freehand / vector annotation sub-tools (under the Draw tool). */
+export type AnnotationTool =
+  | "highlight"
+  | "pen"
+  | "rect"
+  | "line"
+  | "arrow"
+  | "note";
+
+/** Style used when drawing new annotations. */
+export interface DrawStyle {
+  color: string;
+  /** Stroke width in PDF units. */
+  width: number;
+}
+
+interface AnnotBase {
+  id: string;
+  pageIndex: number;
+}
+
+/** A drawn annotation. Coordinates are in PDF units (origin bottom-left). */
+export type Annotation =
+  | (AnnotBase & { kind: "highlight"; x: number; y: number; width: number; height: number; color: string })
+  | (AnnotBase & { kind: "rect"; x: number; y: number; width: number; height: number; color: string; strokeWidth: number })
+  | (AnnotBase & { kind: "line" | "arrow"; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number })
+  | (AnnotBase & { kind: "pen"; pts: { x: number; y: number }[]; color: string; strokeWidth: number })
+  | (AnnotBase & { kind: "note"; x: number; y: number; text: string; color: string });
+
 /** The full editable document state tracked by the undo/redo history. */
 export interface DocState {
   edits: Edits;
   textBoxes: TextBox[];
   redactions: Redaction[];
+  annotations: Annotation[];
 }
 
 /** Active editing tool. */
-export type Tool = "select" | "text" | "redact";
+export type Tool = "select" | "text" | "redact" | "draw";
 
 /** What the properties panel is currently targeting. */
 export type Selection =
   | { kind: "fragment"; id: string }
   | { kind: "textbox"; id: string }
   | { kind: "redaction"; id: string }
+  | { kind: "annotation"; id: string }
   | null;

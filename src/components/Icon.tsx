@@ -101,6 +101,33 @@ const PATHS: Record<string, ReactNode> = {
       <line x1="5" y1="12" x2="19" y2="12" />
     </>
   ),
+  draw: (
+    <>
+      <path d="M15 3l6 6L9 21H3v-6z" />
+      <path d="M13 5l6 6" />
+    </>
+  ),
+  highlighter: (
+    <>
+      <path d="M4 21h16" />
+      <path d="M7 17l7-7 4 4-7 7H7z" />
+      <path d="M12 8l3-3 4 4-3 3" />
+    </>
+  ),
+  rectangle: <rect x="4" y="6" width="16" height="12" rx="1" fill="none" />,
+  line_tool: <line x1="5" y1="19" x2="19" y2="5" />,
+  arrow_tool: (
+    <>
+      <line x1="5" y1="19" x2="19" y2="5" />
+      <polyline points="10 5 19 5 19 14" />
+    </>
+  ),
+  sticky_note: (
+    <>
+      <path d="M4 4h16v10l-6 6H4z" />
+      <polyline points="20 14 14 14 14 20" />
+    </>
+  ),
   chevron_left: <polyline points="15 18 9 12 15 6" />,
   chevron_right: <polyline points="9 18 15 12 9 6" />,
   rotate: (

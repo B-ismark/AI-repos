@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PageView } from "./components/PageView";
+import { PageView, type AnnotSpec } from "./components/PageView";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import { Organize } from "./components/Organize";
+import { DrawToolbar } from "./components/DrawToolbar";
 import { Icon } from "./components/Icon";
 import { useHistory } from "./hooks/useHistory";
 import { useViewport } from "./hooks/useViewport";
@@ -9,7 +10,10 @@ import { loadPdf } from "./pdf/loader";
 import { exportPdf, isFragmentModified } from "./pdf/exporter";
 import { DEFAULT_STYLE, resolveFragmentStyle } from "./pdf/style";
 import type {
+  Annotation,
+  AnnotationTool,
   DocState,
+  DrawStyle,
   LoadedPdf,
   Redaction,
   Selection,
@@ -21,11 +25,12 @@ import type {
 
 type Status = "idle" | "loading" | "ready" | "exporting" | "error";
 
-const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [] };
+const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [], annotations: [] };
 
 const TOOLS: { key: Tool; label: string; icon: string }[] = [
   { key: "select", label: "Select", icon: "arrow_selector_tool" },
   { key: "text", label: "Add text", icon: "text_fields" },
+  { key: "draw", label: "Draw", icon: "draw" },
   { key: "redact", label: "Redact", icon: "select" },
 ];
 
@@ -34,7 +39,9 @@ export function App() {
   const [fileName, setFileName] = useState("document.pdf");
   const [tool, setTool] = useState<Tool>("select");
   const doc = useHistory<DocState>(EMPTY_DOC);
-  const { edits, textBoxes, redactions } = doc.state;
+  const { edits, textBoxes, redactions, annotations } = doc.state;
+  const [drawTool, setDrawTool] = useState<AnnotationTool>("highlight");
+  const [drawStyle, setDrawStyle] = useState<DrawStyle>({ color: "#f4c400", width: 3 });
   const [selection, setSelection] = useState<Selection>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -64,7 +71,8 @@ export function App() {
         : 0,
     [pdf, fragmentById, edits],
   );
-  const changeCount = editedFragmentCount + textBoxes.length + redactions.length;
+  const changeCount =
+    editedFragmentCount + textBoxes.length + redactions.length + annotations.length;
 
   const openBytes = useCallback(
     async (bytes: ArrayBuffer, name: string, note?: string) => {
@@ -190,10 +198,62 @@ export function App() {
     [doc],
   );
 
+  const onAddAnnotation = useCallback(
+    (pageIndex: number, spec: AnnotSpec) => {
+      const id = nextId("an");
+      const annot = { ...spec, id, pageIndex } as Annotation;
+      doc.set((d) => ({ ...d, annotations: [...d.annotations, annot] }));
+      if (spec.kind === "note") {
+        setTool("select");
+        setSelection({ kind: "annotation", id });
+        setAutoFocusId(id);
+      }
+    },
+    [doc],
+  );
+
+  const onChangeNoteText = useCallback(
+    (id: string, text: string) => {
+      doc.set(
+        (d) => ({
+          ...d,
+          annotations: d.annotations.map((a) =>
+            a.id === id && a.kind === "note" ? { ...a, text } : a,
+          ),
+        }),
+        `note-${id}`,
+      );
+    },
+    [doc],
+  );
+
+  const onChangeAnnotation = useCallback(
+    (patch: { color?: string; strokeWidth?: number }) => {
+      if (selection?.kind !== "annotation") return;
+      const id = selection.id;
+      const onlyColour = Object.keys(patch).length === 1 && patch.color !== undefined;
+      doc.set(
+        (d) => ({
+          ...d,
+          annotations: d.annotations.map((a) =>
+            a.id === id ? ({ ...a, ...patch } as Annotation) : a,
+          ),
+        }),
+        onlyColour ? `acolor-${id}` : `awidth-${id}`,
+      );
+    },
+    [selection, doc],
+  );
+
   const onSelect = useCallback((sel: Selection) => {
     setAutoFocusId(null);
     setSelection(sel);
   }, []);
+
+  const selectedAnnotation =
+    selection?.kind === "annotation"
+      ? annotations.find((a) => a.id === selection.id) ?? null
+      : null;
 
   const activeStyle: TextStyle | null = useMemo(() => {
     if (selection?.kind === "fragment") {
@@ -258,6 +318,10 @@ export function App() {
       const id = selection.id;
       doc.set((d) => ({ ...d, redactions: d.redactions.filter((r) => r.id !== id) }));
       setSelection(null);
+    } else if (selection?.kind === "annotation") {
+      const id = selection.id;
+      doc.set((d) => ({ ...d, annotations: d.annotations.filter((a) => a.id !== id) }));
+      setSelection(null);
     }
   }, [selection, doc]);
 
@@ -275,8 +339,10 @@ export function App() {
       setSelection(null);
     } else if (selection?.kind === "redaction" && !redactions.some((r) => r.id === selection.id)) {
       setSelection(null);
+    } else if (selection?.kind === "annotation" && !annotations.some((a) => a.id === selection.id)) {
+      setSelection(null);
     }
-  }, [textBoxes, redactions, selection]);
+  }, [textBoxes, redactions, annotations, selection]);
 
   // Auto-dismiss transient status messages (keep errors until superseded).
   useEffect(() => {
@@ -303,17 +369,26 @@ export function App() {
         e.preventDefault();
         onDelete();
       }
+      // Delete a selected annotation (but not while editing a sticky note).
+      if (
+        selection?.kind === "annotation" &&
+        e.key === "Delete" &&
+        selectedAnnotation?.kind !== "note"
+      ) {
+        e.preventDefault();
+        onDelete();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selection, onDelete, undo, redo]);
+  }, [selection, selectedAnnotation, onDelete, undo, redo]);
 
   const download = useCallback(async () => {
     if (!pdf) return;
     setStatus("exporting");
     setMessage("Building edited PDF…");
     try {
-      const out = await exportPdf(pdf, { edits, textBoxes, redactions });
+      const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations });
       const blob = new Blob([out as BlobPart], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -331,7 +406,7 @@ export function App() {
       setStatus("error");
       setMessage(`Export failed: ${String(err)}`);
     }
-  }, [pdf, edits, textBoxes, redactions, fileName]);
+  }, [pdf, edits, textBoxes, redactions, annotations, fileName]);
 
   const reset = useCallback(() => {
     if (changeCount > 0 && !confirm("Discard all changes and start over?")) return;
@@ -488,9 +563,12 @@ export function App() {
                 page={page}
                 scale={vp.scale}
                 tool={tool}
+                drawTool={drawTool}
+                drawStyle={drawStyle}
                 edits={edits}
                 textBoxes={textBoxes.filter((b) => b.pageIndex === page.pageIndex)}
                 redactions={redactions.filter((r) => r.pageIndex === page.pageIndex)}
+                annotations={annotations.filter((a) => a.pageIndex === page.pageIndex)}
                 selection={selection}
                 autoFocusId={autoFocusId}
                 revision={revision}
@@ -499,8 +577,10 @@ export function App() {
                 onChangeTextBoxText={onChangeTextBoxText}
                 onChangeTextBox={onChangeTextBox}
                 onChangeRedaction={onChangeRedaction}
+                onChangeNoteText={onChangeNoteText}
                 onAddTextBox={onAddTextBox}
                 onAddRedaction={onAddRedaction}
+                onAddAnnotation={onAddAnnotation}
               />
             ))}
           </div>
@@ -517,6 +597,15 @@ export function App() {
               <Icon name="add" size={22} />
             </button>
           </div>
+
+          {tool === "draw" && (
+            <DrawToolbar
+              drawTool={drawTool}
+              setDrawTool={setDrawTool}
+              drawStyle={drawStyle}
+              setDrawStyle={setDrawStyle}
+            />
+          )}
         </div>
 
         {selection && (
@@ -525,8 +614,10 @@ export function App() {
               selection={selection}
               style={activeStyle}
               redactionColor={redactionColor}
+              annotation={selectedAnnotation}
               onChangeStyle={onChangeStyle}
               onChangeRedactionColor={onChangeRedactionColor}
+              onChangeAnnotation={onChangeAnnotation}
               onDelete={onDelete}
               onClose={() => setSelection(null)}
             />

@@ -530,6 +530,54 @@ body {
   .tb-move::after { line-height: 20px; font-size: 13px; }
 }
 
+/* ============ Annotations ============ */
+.annot-svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.note {
+  position: absolute;
+  min-width: 18px;
+  min-height: 20px;
+  max-width: 240px;
+  padding: 4px 7px;
+  border-radius: var(--radius-xs);
+  font: 500 12px/1.3 var(--font-plain);
+  color: #1a1a1a;
+  box-shadow: var(--shadow-1);
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.note:empty::before { content: attr(data-placeholder); opacity: 0.5; }
+.note--sel { box-shadow: 0 0 0 2px var(--primary), var(--shadow-1); }
+
+/* Draw contextual toolbar */
+.drawbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 6px;
+  background: var(--surface-container-high);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-2);
+  z-index: 16;
+  overflow-x: auto;
+}
+.drawbar__tools { display: flex; gap: 2px; flex: none; }
+.drawbar__sep { width: 1px; height: 28px; background: var(--outline-variant); margin: 0 2px; flex: none; }
+.drawbar__width { display: flex; align-items: center; flex: none; }
+.icon-btn--on { background: var(--secondary-container); color: var(--on-secondary-container); }
+.swatch--sm { width: 40px; height: 40px; flex: none; }
+.swatch--sm span { width: 30px; height: 30px; border-radius: var(--radius-sm); }
+.slider--sm { width: 96px; height: 40px; }
+
 /* ============ Organize (page management) ============ */
 .organize {
   position: fixed;
