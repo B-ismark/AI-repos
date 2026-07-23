@@ -530,6 +530,93 @@ body {
   .tb-move::after { line-height: 20px; font-size: 13px; }
 }
 
+/* ============ Organize (page management) ============ */
+.organize {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  padding-top: env(safe-area-inset-top);
+}
+.organize__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-container);
+  flex: none;
+}
+.organize__btnlabel { }
+.organize__hint {
+  color: var(--on-surface-variant);
+  padding: 10px 16px;
+  margin: 0;
+}
+.organize__loading { padding: 40px; text-align: center; color: var(--on-surface-variant); }
+.organize__grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px;
+  padding: 16px calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  align-content: start;
+}
+.pcard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  background: var(--surface-container-low);
+  border-radius: var(--radius-lg);
+  border: 2px solid transparent;
+}
+.pcard--sel { border-color: var(--primary); background: var(--primary-container); }
+.pcard__thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.thumb__frame {
+  display: grid;
+  place-items: center;
+  max-width: 100%;
+  max-height: 100%;
+  transition: transform var(--dur-med2) var(--ease-emphasized-decelerate);
+}
+.thumb__canvas {
+  max-width: 100%;
+  max-height: 200px;
+  box-shadow: var(--shadow-1);
+  background: #fff;
+  border-radius: 2px;
+}
+.thumb__err { color: var(--error); font-weight: 700; }
+.pcard__check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.pcard__no { color: var(--on-surface-variant); }
+.pcard__actions { display: flex; gap: 2px; }
+.icon-btn--sm { width: 40px; height: 40px; color: var(--on-surface-variant); }
+
 /* ============ Responsive: rail + side panel at ≥600px ============ */
 @media (min-width: 600px) {
   .toolnav {
@@ -568,4 +655,5 @@ body {
 @media (max-width: 599px) {
   .appbar__download { display: none; }
   .appbar__name { display: none; }
+  .organize__btnlabel { display: none; }
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageView } from "./components/PageView";
 import { PropertiesPanel } from "./components/PropertiesPanel";
+import { Organize } from "./components/Organize";
 import { Icon } from "./components/Icon";
 import { useHistory } from "./hooks/useHistory";
 import { useViewport } from "./hooks/useViewport";
@@ -41,6 +42,7 @@ export function App() {
   const [message, setMessage] = useState("");
   const [dragging, setDragging] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [organizeOpen, setOrganizeOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const counter = useRef(0);
   const nextId = (prefix: string) => `${prefix}-${counter.current++}`;
@@ -64,31 +66,23 @@ export function App() {
   );
   const changeCount = editedFragmentCount + textBoxes.length + redactions.length;
 
-  const openFile = useCallback(
-    async (file: File) => {
-      if (file.type && file.type !== "application/pdf") {
-        setStatus("error");
-        setMessage(`"${file.name}" is not a PDF.`);
-        return;
-      }
+  const openBytes = useCallback(
+    async (bytes: ArrayBuffer, name: string, note?: string) => {
       setStatus("loading");
-      setMessage(`Loading ${file.name}…`);
+      setMessage(`Loading ${name}…`);
       try {
-        const bytes = await file.arrayBuffer();
         const loaded = await loadPdf(bytes);
         setPdf(loaded);
-        setFileName(file.name);
+        setFileName(name);
         doc.reset(EMPTY_DOC);
         setSelection(null);
         setTool("select");
         setRevision((r) => r + 1);
-        vp.setPageWidth(
-          Math.max(...loaded.pages.map((p) => p.viewBox.width), 1),
-        );
+        vp.setPageWidth(Math.max(...loaded.pages.map((p) => p.viewBox.width), 1));
         vp.resetZoom();
         setStatus("ready");
         const total = loaded.pages.reduce((n, p) => n + p.fragments.length, 0);
-        setMessage(`${loaded.pages.length} page(s) · ${total} text fragments`);
+        setMessage(note ?? `${loaded.pages.length} page(s) · ${total} text fragments`);
       } catch (err) {
         setStatus("error");
         setMessage(`Could not open PDF: ${String(err)}`);
@@ -96,6 +90,28 @@ export function App() {
     },
     [doc, vp],
   );
+
+  const openFile = useCallback(
+    async (file: File) => {
+      if (file.type && file.type !== "application/pdf") {
+        setStatus("error");
+        setMessage(`"${file.name}" is not a PDF.`);
+        return;
+      }
+      await openBytes(await file.arrayBuffer(), file.name);
+    },
+    [openBytes],
+  );
+
+  const downloadBytes = useCallback((bytes: Uint8Array, filename: string) => {
+    const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   const onChangeFragmentText = useCallback(
     (id: string, text: string) => {
@@ -365,6 +381,17 @@ export function App() {
               <>
                 <div className="menu__scrim" onClick={() => setMenuOpen(false)} />
                 <div className="menu__list" role="menu">
+                  <button
+                    className="menu__item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setSelection(null);
+                      setOrganizeOpen(true);
+                    }}
+                    role="menuitem"
+                  >
+                    <Icon name="select" size={20} /> Organize pages
+                  </button>
                   <button className="menu__item" onClick={reset} role="menuitem">
                     <Icon name="note_add" size={20} /> Open another PDF
                   </button>
@@ -524,6 +551,22 @@ export function App() {
         <div className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}>
           {message}
         </div>
+      )}
+
+      {organizeOpen && pdf && (
+        <Organize
+          mainBytes={pdf.bytes}
+          fileName={fileName}
+          hasEdits={changeCount > 0}
+          onApply={(bytes, note) => {
+            setOrganizeOpen(false);
+            void openBytes(bytes, fileName, note);
+          }}
+          onExtract={(bytes) =>
+            downloadBytes(bytes, fileName.replace(/\.pdf$/i, "") + "-extract.pdf")
+          }
+          onClose={() => setOrganizeOpen(false)}
+        />
       )}
     </div>
   );

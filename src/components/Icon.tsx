@@ -101,6 +101,16 @@ const PATHS: Record<string, ReactNode> = {
       <line x1="5" y1="12" x2="19" y2="12" />
     </>
   ),
+  chevron_left: <polyline points="15 18 9 12 15 6" />,
+  chevron_right: <polyline points="9 18 15 12 9 6" />,
+  rotate: (
+    <>
+      <path d="M21 2v6h-6" />
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M3 22v-6h6" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+    </>
+  ),
   hourglass_top: (
     <>
       <line x1="6" y1="3" x2="18" y2="3" />
