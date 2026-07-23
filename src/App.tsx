@@ -123,6 +123,7 @@ export function App() {
   const doc = useHistory<DocState>(EMPTY_DOC);
   const { edits, textBoxes, redactions, annotations, stamps } = doc.state;
   const links = doc.state.links ?? [];
+  const formValues = doc.state.formValues ?? {};
   // Remembered across sessions so the user's choices aren't reset each time.
   const [drawTool, setDrawTool] = usePersistentState("pref.drawTool", "highlight") as [
     AnnotationTool,
@@ -220,7 +221,7 @@ export function App() {
     [pdf, fragmentById, edits],
   );
   const changeCount =
-    editedFragmentCount + textBoxes.length + redactions.length + annotations.length + stamps.length + links.length;
+    editedFragmentCount + textBoxes.length + redactions.length + annotations.length + stamps.length + links.length + Object.keys(formValues).length;
 
   // ---- Find in document (Ctrl/⌘+F) ----
   const matches: FindMatch[] = useMemo(
@@ -399,9 +400,9 @@ export function App() {
   /** Export the current edits to fresh bytes so finishing ops build on them. */
   const bakeCurrent = useCallback(async (): Promise<ArrayBuffer> => {
     const { exportPdf } = await import("./pdf/exporter");
-    const out = await exportPdf(pdf!, { edits, textBoxes, redactions, annotations, stamps, links });
+    const out = await exportPdf(pdf!, { edits, textBoxes, redactions, annotations, stamps, links, formValues });
     return toAB(out);
-  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links]);
+  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues]);
 
   const applyNumbers = useCallback(
     async (opts: PageNumberOptions) => {
@@ -599,6 +600,16 @@ export function App() {
           links: (d.links ?? []).map((l) => (l.id === id ? { ...l, ...patch } : l)),
         }),
         key,
+      );
+    },
+    [doc],
+  );
+
+  const onChangeFormValue = useCallback(
+    (name: string, value: string | boolean) => {
+      doc.set(
+        (d) => ({ ...d, formValues: { ...(d.formValues ?? {}), [name]: value } }),
+        `form-${name}`,
       );
     },
     [doc],
@@ -1187,7 +1198,7 @@ export function App() {
     setMessage("Building edited PDF…");
     try {
       const { exportPdf } = await import("./pdf/exporter");
-      const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations, stamps, links });
+      const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations, stamps, links, formValues });
       const blob = new Blob([out as BlobPart], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1205,7 +1216,7 @@ export function App() {
       setStatus("error");
       setMessage("Couldn't build the edited PDF. Please try again.");
     }
-  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, fileName]);
+  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues, fileName]);
 
   const doReset = useCallback(() => {
     setPdf(null);
@@ -1502,6 +1513,7 @@ export function App() {
                 annotations={annotations.filter((a) => a.pageIndex === page.pageIndex)}
                 stamps={stamps.filter((s) => s.pageIndex === page.pageIndex)}
                 links={links.filter((l) => l.pageIndex === page.pageIndex)}
+                formValues={formValues}
                 placing={!!pendingStamp}
                 findMatches={matchesByPage.get(page.pageIndex)}
                 activeFindId={activeMatch?.id ?? null}
@@ -1523,6 +1535,7 @@ export function App() {
                 onAddTextBox={onAddTextBox}
                 onAddRedaction={onAddRedaction}
                 onAddLink={onAddLink}
+                onChangeFormValue={onChangeFormValue}
                 onAddAnnotation={onAddAnnotation}
                 onPlaceStamp={onPlaceStamp}
               />

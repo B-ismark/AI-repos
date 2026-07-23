@@ -30,12 +30,31 @@ export interface TextFragment {
   fontFamily: string;
 }
 
+/** An interactive AcroForm field detected on a page (text or checkbox). */
+export interface FormField {
+  /** Unique per widget: `${pageIndex}:field:${i}`. */
+  id: string;
+  /** AcroForm field name (the export key). */
+  name: string;
+  pageIndex: number;
+  type: "text" | "checkbox";
+  /** Widget rect in PDF units (bottom-left origin). */
+  rect: { x: number; y: number; width: number; height: number };
+  /** Initial value from the source PDF. */
+  defaultValue: string | boolean;
+  readOnly?: boolean;
+  /** Text fields only: single-line comb/limit hints. */
+  multiline?: boolean;
+}
+
 /** Everything needed to render and edit one page. */
 export interface PageData {
   pageIndex: number;
   /** Unscaled page dimensions in PDF units (== points). */
   viewBox: { width: number; height: number };
   fragments: TextFragment[];
+  /** Interactive form fields on this page (empty if none). */
+  fields: FormField[];
 }
 
 /** The parsed document plus its original bytes (needed to re-export). */
@@ -153,6 +172,8 @@ export interface DocState {
   stamps: Stamp[];
   /** Optional — absent in older persisted sessions. */
   links?: LinkAnnot[];
+  /** Filled AcroForm values, keyed by field name. */
+  formValues?: Record<string, string | boolean>;
 }
 
 /** Active editing tool. */

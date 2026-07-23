@@ -24,6 +24,7 @@ import { useGuides } from "../hooks/useSnap";
 import type { LinkAnnot, Stamp } from "../pdf/types";
 import type { FindMatch } from "../pdf/find";
 import { LinkItem } from "./LinkItem";
+import { FormFieldLayer } from "./FormFieldLayer";
 
 /** Annotation spec minus the fields the App assigns (id, pageIndex). */
 export type AnnotSpec = Omit<Annotation, "id" | "pageIndex">;
@@ -41,6 +42,7 @@ interface Props {
   annotations: Annotation[];
   stamps: Stamp[];
   links: LinkAnnot[];
+  formValues: Record<string, string | boolean>;
   placing: boolean;
   /** Search hits on this page (PDF units), and the id of the active one. */
   findMatches?: FindMatch[];
@@ -65,6 +67,7 @@ interface Props {
   onAddTextBox: (pageIndex: number, x: number, y: number) => void;
   onAddRedaction: (pageIndex: number, x: number, y: number, width: number, height: number, cover?: boolean) => void;
   onAddLink: (pageIndex: number, x: number, y: number, width: number, height: number) => void;
+  onChangeFormValue: (name: string, value: string | boolean) => void;
   onAddAnnotation: (pageIndex: number, spec: AnnotSpec) => void;
   onPlaceStamp: (pageIndex: number, xLeft: number, yTop: number) => void;
 }
@@ -83,9 +86,9 @@ interface Gesture {
 export function PageView(props: Props) {
   const {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
-    annotations, stamps, links, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, revision, onSelect,
+    annotations, stamps, links, formValues, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, revision, onSelect,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction, onChangeLink,
-    onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddLink, onAddAnnotation,
+    onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddLink, onChangeFormValue, onAddAnnotation,
     onPlaceStamp,
   } = props;
 
@@ -378,6 +381,15 @@ export function PageView(props: Props) {
               onChange={onChangeLink}
             />
           ))}
+
+          <FormFieldLayer
+            fields={page.fields}
+            scale={scale}
+            pageHeight={H}
+            values={formValues}
+            active={tool === "select" && !placing}
+            onChange={onChangeFormValue}
+          />
 
           {/* Snap guide lines (shown while dragging an element near a page
               edge or centre line). */}

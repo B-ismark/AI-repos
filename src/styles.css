@@ -765,6 +765,29 @@ body {
 .redaction--cover { outline: 1px dashed color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
 .whiteout--preview { position: absolute; background: rgba(255, 255, 255, 0.85); border: 1px dashed var(--primary); pointer-events: none; }
 
+/* ============ Form fields ============ */
+.formlayer { position: absolute; inset: 0; z-index: 3; }
+.formfield {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, #1a73e8 60%, transparent);
+  background: color-mix(in srgb, #1a73e8 8%, transparent);
+  border-radius: 2px;
+  color: #111;
+  font-family: var(--font-plain);
+}
+.formfield--text { padding: 0 3px; outline: none; }
+.formfield--text:focus { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, #fff); }
+.formfield--check {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: #1a73e8;
+  padding: 0;
+}
+.formfield--check.formfield--on { background: color-mix(in srgb, #1a73e8 18%, transparent); }
+.formfield:disabled { opacity: 0.6; cursor: default; }
+
 /* ============ Snap guides ============ */
 .snapguide { position: absolute; background: var(--primary); pointer-events: none; z-index: 6; opacity: 0.9; }
 .snapguide--v { top: 0; bottom: 0; width: 1px; }

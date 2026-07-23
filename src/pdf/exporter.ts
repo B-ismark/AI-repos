@@ -1,4 +1,4 @@
-import { PDFDocument, PDFString, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFCheckBox, PDFDocument, PDFString, PDFTextField, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
 import {
   DEFAULT_STYLE,
@@ -29,6 +29,27 @@ export interface ExportInput {
   annotations: Annotation[];
   stamps: Stamp[];
   links?: LinkAnnot[];
+  /** Filled AcroForm values keyed by field name. */
+  formValues?: Record<string, string | boolean>;
+}
+
+/** Fill the source document's AcroForm from user values and flatten it, so the
+ * filled appearances bake into the page content that gets copied out. */
+function fillAndFlattenForm(src: PDFDocument, formValues: Record<string, string | boolean>): void {
+  if (Object.keys(formValues).length === 0) return;
+  try {
+    const form = src.getForm();
+    for (const field of form.getFields()) {
+      const name = field.getName();
+      if (!(name in formValues)) continue;
+      const v = formValues[name];
+      if (field instanceof PDFTextField) field.setText(typeof v === "string" ? v : "");
+      else if (field instanceof PDFCheckBox) (v ? field.check() : field.uncheck());
+    }
+    form.flatten();
+  } catch {
+    /* No form, or a field type/font we can't flatten — leave as-is. */
+  }
 }
 
 /** Attach clickable URI link annotations to a page (works on vector and
@@ -244,8 +265,9 @@ export async function exportPdf(
   loaded: LoadedPdf,
   input: ExportInput,
 ): Promise<Uint8Array> {
-  const { edits, textBoxes, redactions, annotations, stamps, links = [] } = input;
+  const { edits, textBoxes, redactions, annotations, stamps, links = [], formValues = {} } = input;
   const src = await PDFDocument.load(loaded.bytes.slice(0));
+  fillAndFlattenForm(src, formValues);
   const out = await PDFDocument.create();
   const fontCache = new Map<string, PDFFont>();
 
