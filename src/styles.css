@@ -386,6 +386,28 @@ body {
   text-align: left;
 }
 .menu__item:hover { background: color-mix(in srgb, var(--on-surface) 8%, transparent); }
+.menu__divider { height: 1px; background: var(--outline-variant); margin: 6px 4px; }
+
+/* Finishing dialog form controls */
+.dialog__body--form { display: block; align-items: stretch; }
+.posgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 150px; }
+.posgrid__cell {
+  height: 30px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+}
+.posgrid__cell--on { background: var(--secondary-container); border-color: transparent; }
+.numinput {
+  width: 88px;
+  padding: 8px 10px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  font-size: 1rem;
+}
 
 /* ============ Snackbar ============ */
 .snackbar {

@@ -101,6 +101,13 @@ const PATHS: Record<string, ReactNode> = {
       <line x1="5" y1="12" x2="19" y2="12" />
     </>
   ),
+  tag: (
+    <>
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <circle cx="7" cy="7" r="1.2" fill="currentColor" stroke="none" />
+    </>
+  ),
+  watermark: <path d="M12 3c3.2 4.2 6 7.2 6 11a6 6 0 0 1-12 0c0-3.8 2.8-6.8 6-11z" fill="none" />,
   signature: (
     <>
       <path d="M3 17c2.5 0 3-9 5.5-9S11 17 13 17s2-5 4-5 1.5 2 4 2" />

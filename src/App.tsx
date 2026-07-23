@@ -4,7 +4,15 @@ import { PropertiesPanel } from "./components/PropertiesPanel";
 import { Organize } from "./components/Organize";
 import { DrawToolbar } from "./components/DrawToolbar";
 import { SignatureDialog } from "./components/SignatureDialog";
+import { FinishDialog } from "./components/FinishDialog";
 import { Icon } from "./components/Icon";
+import {
+  addPageNumbers,
+  addWatermark,
+  renderImages,
+  type PageNumberOptions,
+  type WatermarkOptions,
+} from "./pdf/finishOps";
 import { useHistory } from "./hooks/useHistory";
 import { useViewport } from "./hooks/useViewport";
 import { loadPdf } from "./pdf/loader";
@@ -47,6 +55,7 @@ export function App() {
   const [drawTool, setDrawTool] = useState<AnnotationTool>("highlight");
   const [drawStyle, setDrawStyle] = useState<DrawStyle>({ color: "#f4c400", width: 3 });
   const [sigOpen, setSigOpen] = useState(false);
+  const [finishTab, setFinishTab] = useState<"numbers" | "watermark" | null>(null);
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [selection, setSelection] = useState<Selection>(null);
@@ -127,6 +136,77 @@ export function App() {
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+
+  const toAB = (u8: Uint8Array): ArrayBuffer => {
+    const ab = new ArrayBuffer(u8.byteLength);
+    new Uint8Array(ab).set(u8);
+    return ab;
+  };
+
+  /** Export the current edits to fresh bytes so finishing ops build on them. */
+  const bakeCurrent = useCallback(async (): Promise<ArrayBuffer> => {
+    const out = await exportPdf(pdf!, { edits, textBoxes, redactions, annotations, stamps });
+    return toAB(out);
+  }, [pdf, edits, textBoxes, redactions, annotations, stamps]);
+
+  const applyNumbers = useCallback(
+    async (opts: PageNumberOptions) => {
+      setFinishTab(null);
+      setStatus("exporting");
+      setMessage("Adding page numbers…");
+      try {
+        const baked = await bakeCurrent();
+        const res = await addPageNumbers(baked, opts);
+        await openBytes(toAB(res), fileName, "Page numbers added.");
+      } catch (err) {
+        setStatus("error");
+        setMessage(`Failed: ${String(err)}`);
+      }
+    },
+    [bakeCurrent, openBytes, fileName],
+  );
+
+  const applyWatermark = useCallback(
+    async (opts: WatermarkOptions) => {
+      setFinishTab(null);
+      setStatus("exporting");
+      setMessage("Applying watermark…");
+      try {
+        const baked = await bakeCurrent();
+        const res = await addWatermark(baked, opts);
+        await openBytes(toAB(res), fileName, "Watermark applied.");
+      } catch (err) {
+        setStatus("error");
+        setMessage(`Failed: ${String(err)}`);
+      }
+    },
+    [bakeCurrent, openBytes, fileName],
+  );
+
+  const exportImages = useCallback(async () => {
+    if (!pdf) return;
+    setMenuOpen(false);
+    setStatus("exporting");
+    setMessage("Rendering images…");
+    try {
+      const baked = await bakeCurrent();
+      const urls = await renderImages(baked, pdf.pages.length, 2);
+      const base = fileName.replace(/\.pdf$/i, "");
+      urls.forEach((url, i) => {
+        setTimeout(() => {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${base}-p${i + 1}.png`;
+          a.click();
+        }, i * 300);
+      });
+      setStatus("ready");
+      setMessage(`Exported ${urls.length} image(s).`);
+    } catch (err) {
+      setStatus("error");
+      setMessage(`Failed: ${String(err)}`);
+    }
+  }, [pdf, bakeCurrent, fileName]);
 
   const onChangeFragmentText = useCallback(
     (id: string, text: string) => {
@@ -539,6 +619,25 @@ export function App() {
                   >
                     <Icon name="image" size={20} /> Add image
                   </button>
+                  <div className="menu__divider" />
+                  <button
+                    className="menu__item"
+                    onClick={() => { setMenuOpen(false); setSelection(null); setFinishTab("numbers"); }}
+                    role="menuitem"
+                  >
+                    <Icon name="tag" size={20} /> Page numbers
+                  </button>
+                  <button
+                    className="menu__item"
+                    onClick={() => { setMenuOpen(false); setSelection(null); setFinishTab("watermark"); }}
+                    role="menuitem"
+                  >
+                    <Icon name="watermark" size={20} /> Watermark
+                  </button>
+                  <button className="menu__item" onClick={exportImages} role="menuitem">
+                    <Icon name="image" size={20} /> Export as images
+                  </button>
+                  <div className="menu__divider" />
                   <button className="menu__item" onClick={reset} role="menuitem">
                     <Icon name="note_add" size={20} /> Open another PDF
                   </button>
@@ -743,6 +842,15 @@ export function App() {
           e.target.value = "";
         }}
       />
+
+      {finishTab && (
+        <FinishDialog
+          initialTab={finishTab}
+          onApplyNumbers={applyNumbers}
+          onApplyWatermark={applyWatermark}
+          onClose={() => setFinishTab(null)}
+        />
+      )}
 
       {organizeOpen && pdf && (
         <Organize
