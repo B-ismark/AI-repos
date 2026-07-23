@@ -11,6 +11,40 @@ type Tab = "draw" | "type" | "upload";
 const PAD_W = 560;
 const PAD_H = 220;
 
+/** Crop a drawn signature to its ink bounding box (+ a small even margin) so
+ * the placed stamp fits the strokes instead of the whole empty pad. */
+function trimToInk(canvas: HTMLCanvasElement): { dataUrl: string; w: number; h: number } | null {
+  const g = canvas.getContext("2d");
+  if (!g) return null;
+  const { width, height } = canvas;
+  const { data } = g.getImageData(0, 0, width, height);
+  let minX = width, minY = height, maxX = 0, maxY = 0, found = false;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] > 10) {
+        found = true;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (!found) return null;
+  const pad = 14;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(width - 1, maxX + pad);
+  maxY = Math.min(height - 1, maxY + pad);
+  const w = maxX - minX + 1;
+  const h = maxY - minY + 1;
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  out.getContext("2d")!.drawImage(canvas, minX, minY, w, h, 0, 0, w, h);
+  return { dataUrl: out.toDataURL("image/png"), w, h };
+}
+
 /** Create a signature by drawing, typing (script font), or uploading. */
 export function SignatureDialog({ onCreate, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("draw");
@@ -67,7 +101,8 @@ export function SignatureDialog({ onCreate, onClose }: Props) {
   const insert = () => {
     if (tab === "draw") {
       if (!dirty.current) return;
-      commit({ dataUrl: canvasRef.current!.toDataURL("image/png"), w: PAD_W, h: PAD_H });
+      const trimmed = trimToInk(canvasRef.current!);
+      if (trimmed) commit(trimmed);
     } else if (tab === "type") {
       if (!typed.trim()) return;
       const c = document.createElement("canvas");
