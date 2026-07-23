@@ -53,11 +53,16 @@ const WORKER_INIT_TIMEOUT = 60_000;
 /** Longest we'll wait to recognise a single page. */
 const PAGE_TIMEOUT = 120_000;
 
-/** Quick check that the language model is reachable on our own origin. */
+/** Quick check that the language model is reachable on our own origin. A
+ * single-page-app host may answer a missing path with a soft-200 that serves
+ * index.html, so a bare `res.ok` can be a false positive — reject an HTML
+ * content-type so we surface "not available" cleanly instead of handing the
+ * worker an HTML page to choke on. */
 async function assetsPresent(): Promise<boolean> {
   try {
     const res = await fetch(`${LANG_PATH}/eng.traineddata.gz`, { method: "HEAD" });
-    return res.ok;
+    if (!res.ok) return false;
+    return !(res.headers.get("content-type") || "").toLowerCase().includes("text/html");
   } catch {
     return false;
   }

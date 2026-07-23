@@ -1,5 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
+import { yieldToUI } from "./yield";
 
 // Page numbering and watermark are no longer separate document-rebuild passes;
 // they live in DocState and are drawn on every page at export time (see
@@ -27,6 +28,7 @@ export async function compressPdf(
   const out = await PDFDocument.create();
   for (let i = 0; i < pageSizes.length; i++) {
     onProgress?.(i + 1, pageSizes.length);
+    await yieldToUI();
     const canvas = await renderPageToCanvas(bytes, i, opts.scale);
     const jpg = canvas.toDataURL("image/jpeg", opts.quality);
     const img = await out.embedJpg(jpg);
@@ -47,6 +49,7 @@ export async function renderImages(
   const urls: string[] = [];
   for (let i = 0; i < pageCount; i++) {
     onProgress?.(i + 1, pageCount);
+    await yieldToUI();
     const canvas = await renderPageToCanvas(bytes, i, scale);
     urls.push(canvas.toDataURL("image/png"));
   }
