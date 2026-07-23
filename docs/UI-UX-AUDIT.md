@@ -14,6 +14,41 @@ Human Interface Guidelines)** documentation.
 
 ---
 
+## Implementation status (2026-07-23)
+
+All findings from both parts have been addressed on this branch. Notes on the
+few that were resolved by mitigation or in phases:
+
+| Finding | Status | Notes |
+| --- | --- | --- |
+| #1 focus ring | ✅ Fixed | Global `:focus-visible` with inset variants. |
+| #2 / P-2 zoom lock | ✅ Fixed | `maximum-scale`/`user-scalable` removed. |
+| #3 unsaved-work | ✅ Fixed | `beforeunload` while `changeCount > 0`. |
+| #4 keyboard canvas | ◑ Phased | Arrow-nudge + delete + roles shipped; full keyboard *selection* of on-page items remains the larger follow-up. |
+| #5 modals | ✅ Fixed | `useModal`: trap, Esc, focus return, roles. |
+| #6 touch labels | ◑ Mitigated | Robust `aria-label`s kept; visible labels omitted to avoid crowding the M3 bar. |
+| #7 / M-1 targets | ✅ Fixed | icon-btn 48, btn 44, etc. |
+| #8 live regions | ✅ Fixed | Polite/assertive SR live regions. |
+| #9 / M-2 breakpoints | ✅ Fixed | Expanded ≥840px tier + fit-width cap. |
+| #10 bottom clutter | ✅ Fixed | Zoom bar + FAB hidden with sheet open. |
+| #11 render feedback | ✅ Fixed | Per-page shimmer skeleton + `aria-busy`. |
+| #12 error copy | ✅ Fixed | Plain-language messages. |
+| #13 menu keyboard | ✅ Fixed | Arrow/Home/End/Esc roving focus. |
+| #14 editable roles | ✅ Fixed | `role="textbox"` + labels. |
+| #15 dark-page glare | ✅ Fixed | Optional "Dim pages" preview mode. |
+| #16 persistent panel | ✅ Fixed | Panel always mounted on ≥600px. |
+| #17 tooltips | ✅ Fixed | Handles use `data-tip`. |
+| #18 note contrast | ✅ Fixed | Auto black/white by luminance. |
+| #19 tool shortcuts | ✅ Fixed | V/T/D/S/R, shown in tooltips. |
+| #20 README | ✅ Fixed | Claims now match; a11y documented. |
+| P-1 system gestures | ◑ Mitigated | Data-loss risk removed via #3 + P-3; `touch-action: none` kept for reliable pinch-zoom. |
+| P-3 modal Back | ✅ Fixed | History-integrated in `useModal`. |
+| P-4 momentum | ✅ Fixed | Inertial glide on one-finger pan. |
+| M-3 rail | ✅ Fixed | Rail widened to 80px. |
+| i-1 double-tap | ◑ Mitigated | Visible zoom controls are the non-gesture path. |
+
+---
+
 ## How to read this report
 
 **Criticality** — user impact if left unaddressed:
