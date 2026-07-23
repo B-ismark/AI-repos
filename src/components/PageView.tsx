@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { renderPage } from "../pdf/loader";
-import { isFragmentModified } from "../pdf/exporter";
-import { resolveFragmentStyle } from "../pdf/style";
+import { isFragmentModified, resolveFragmentStyle } from "../pdf/style";
 import type {
   Annotation,
   AnnotationTool,
@@ -49,6 +48,7 @@ interface Props {
   onChangeNoteText: (id: string, text: string) => void;
   onMoveAnnotation: (annot: Annotation, key: string) => void;
   onChangeStamp: (id: string, patch: Partial<Stamp>, key: string) => void;
+  onDeleteStamp: (id: string) => void;
   onAddTextBox: (pageIndex: number, x: number, y: number) => void;
   onAddRedaction: (pageIndex: number, x: number, y: number, width: number, height: number) => void;
   onAddAnnotation: (pageIndex: number, spec: AnnotSpec) => void;
@@ -71,7 +71,7 @@ export function PageView(props: Props) {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
     annotations, stamps, placing, selection, autoFocusId, revision, onSelect,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction,
-    onChangeNoteText, onMoveAnnotation, onChangeStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
+    onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddAnnotation,
     onPlaceStamp,
   } = props;
 
@@ -301,6 +301,7 @@ export function PageView(props: Props) {
               interactive={tool === "select"}
               onSelect={(id) => onSelect({ kind: "stamp", id })}
               onChange={onChangeStamp}
+              onDelete={onDeleteStamp}
             />
           ))}
 

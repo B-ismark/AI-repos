@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { acquireEscapeLayer } from "../hooks/useModal";
 
 interface Props {
@@ -71,40 +72,52 @@ export function ColorField({ value, onChange, small }: Props) {
         aria-label="Choose colour"
         aria-expanded={open}
       />
-      {open && pos && (
-        <div ref={popRef} className="colorfield__pop" style={{ left: pos.left, top: pos.top }} role="dialog" aria-label="Choose colour">
-          <div className="colorfield__grid">
-            {PRESETS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`colorfield__chip${c.toLowerCase() === value.toLowerCase() ? " colorfield__chip--on" : ""}`}
-                style={{ background: c }}
-                onClick={() => {
-                  onChange(c);
-                  setOpen(false);
+      {open &&
+        pos &&
+        /* Portal to <body>: rendered in place, a transformed ancestor (e.g. the
+           centered draw toolbar) would otherwise become the containing block for
+           this fixed popover and throw its position way off. */
+        createPortal(
+          <div
+            ref={popRef}
+            className="colorfield__pop"
+            style={{ left: pos.left, top: pos.top }}
+            role="dialog"
+            aria-label="Choose colour"
+          >
+            <div className="colorfield__grid">
+              {PRESETS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`colorfield__chip${c.toLowerCase() === value.toLowerCase() ? " colorfield__chip--on" : ""}`}
+                  style={{ background: c }}
+                  onClick={() => {
+                    onChange(c);
+                    setOpen(false);
+                  }}
+                  aria-label={c}
+                />
+              ))}
+            </div>
+            <div className="colorfield__hexrow">
+              <span className="colorfield__preview" style={{ background: isHex(hex) ? hex : value }} />
+              <input
+                className="colorfield__hex"
+                value={hex}
+                spellCheck={false}
+                maxLength={7}
+                onChange={(e) => {
+                  let v = e.target.value;
+                  if (!v.startsWith("#")) v = "#" + v.replace(/#/g, "");
+                  setHex(v);
+                  if (isHex(v)) onChange(v);
                 }}
-                aria-label={c}
               />
-            ))}
-          </div>
-          <div className="colorfield__hexrow">
-            <span className="colorfield__preview" style={{ background: isHex(hex) ? hex : value }} />
-            <input
-              className="colorfield__hex"
-              value={hex}
-              spellCheck={false}
-              maxLength={7}
-              onChange={(e) => {
-                let v = e.target.value;
-                if (!v.startsWith("#")) v = "#" + v.replace(/#/g, "");
-                setHex(v);
-                if (isHex(v)) onChange(v);
-              }}
-            />
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

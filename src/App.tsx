@@ -1,29 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageView, type AnnotSpec } from "./components/PageView";
 import { translateAnnotation } from "./components/AnnotationLayer";
 import { PropertiesPanel } from "./components/PropertiesPanel";
-import { Organize } from "./components/Organize";
 import { DrawToolbar } from "./components/DrawToolbar";
-import { SignatureDialog } from "./components/SignatureDialog";
-import { FinishDialog } from "./components/FinishDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { TooltipHost } from "./components/TooltipHost";
 import { Icon } from "./components/Icon";
-import {
-  addPageNumbers,
-  addWatermark,
-  renderImages,
-  type PageNumberOptions,
-  type WatermarkOptions,
-} from "./pdf/finishOps";
+import type { PageNumberOptions, WatermarkOptions } from "./pdf/finishOps";
 import { useHistory } from "./hooks/useHistory";
 import { usePersistentState } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { loadPdf } from "./pdf/loader";
-import { exportPdf, isFragmentModified } from "./pdf/exporter";
-import { DEFAULT_STYLE, resolveFragmentStyle } from "./pdf/style";
+import { DEFAULT_STYLE, isFragmentModified, resolveFragmentStyle } from "./pdf/style";
+
+// On-demand modals — each pulls in heavy code (pdf-lib, canvas rendering) that
+// isn't needed until the user opens it, so they're code-split out of the
+// initial bundle.
+const Organize = lazy(() =>
+  import("./components/Organize").then((m) => ({ default: m.Organize })),
+);
+const SignatureDialog = lazy(() =>
+  import("./components/SignatureDialog").then((m) => ({ default: m.SignatureDialog })),
+);
+const FinishDialog = lazy(() =>
+  import("./components/FinishDialog").then((m) => ({ default: m.FinishDialog })),
+);
 import type {
   Annotation,
   AnnotationTool,
@@ -156,9 +159,12 @@ export function App() {
   const theme = useTheme();
   // >=600px gets the persistent side panel + tool rail (Material Medium+).
   const isWide = useMediaQuery("(min-width: 600px)");
+  // Stamps have no properties panel (edited directly on the canvas), so they
+  // don't drive the sheet/side panel.
+  const panelSelection = selection && selection.kind !== "stamp" ? selection : null;
   // The mobile properties sheet covers the bottom of the screen; hide the
   // floating zoom bar + FAB while it's open to declutter the thumb zone.
-  const sheetOpen = !isWide && !!selection;
+  const sheetOpen = !isWide && !!panelSelection;
   const themeIcon =
     theme.mode === "light" ? "light_mode" : theme.mode === "dark" ? "dark_mode" : "system_mode";
   const themeLabel =
@@ -241,6 +247,7 @@ export function App() {
 
   /** Export the current edits to fresh bytes so finishing ops build on them. */
   const bakeCurrent = useCallback(async (): Promise<ArrayBuffer> => {
+    const { exportPdf } = await import("./pdf/exporter");
     const out = await exportPdf(pdf!, { edits, textBoxes, redactions, annotations, stamps });
     return toAB(out);
   }, [pdf, edits, textBoxes, redactions, annotations, stamps]);
@@ -252,6 +259,7 @@ export function App() {
       setMessage("Adding page numbers…");
       try {
         const baked = await bakeCurrent();
+        const { addPageNumbers } = await import("./pdf/finishOps");
         const res = await addPageNumbers(baked, opts);
         await openBytes(toAB(res), fileName, "Page numbers added.");
       } catch {
@@ -269,6 +277,7 @@ export function App() {
       setMessage("Applying watermark…");
       try {
         const baked = await bakeCurrent();
+        const { addWatermark } = await import("./pdf/finishOps");
         const res = await addWatermark(baked, opts);
         await openBytes(toAB(res), fileName, "Watermark applied.");
       } catch {
@@ -286,6 +295,7 @@ export function App() {
     setMessage("Rendering images…");
     try {
       const baked = await bakeCurrent();
+      const { renderImages } = await import("./pdf/finishOps");
       const urls = await renderImages(baked, pdf.pages.length, 2);
       const base = fileName.replace(/\.pdf$/i, "");
       urls.forEach((url, i) => {
@@ -375,8 +385,9 @@ export function App() {
         ...d,
         redactions: [...d.redactions, { id, pageIndex, x, y, width, height, color: "#000000" }],
       }));
-      // Keep the Redact tool active so several regions can be drawn in a row;
-      // still select the new one so its colour is adjustable right away.
+      // Switch to Select so the new redaction can be moved/resized/recoloured
+      // right away (in Redact mode it wouldn't be interactive).
+      setTool("select");
       setSelection({ kind: "redaction", id });
     },
     [doc],
@@ -451,6 +462,9 @@ export function App() {
       const stamp: Stamp = { id, pageIndex, x: xLeft, y: yTop - height, width, height, dataUrl: pendingStamp.dataUrl };
       doc.set((d) => ({ ...d, stamps: [...d.stamps, stamp] }));
       setPendingStamp(null);
+      // Switch to Select so the just-placed stamp is immediately movable/
+      // resizable, regardless of which tool was active before signing.
+      setTool("select");
       setSelection({ kind: "stamp", id });
       setMessage("");
     },
@@ -463,6 +477,14 @@ export function App() {
         (d) => ({ ...d, stamps: d.stamps.map((s) => (s.id === id ? { ...s, ...patch } : s)) }),
         key,
       );
+    },
+    [doc],
+  );
+
+  const onDeleteStamp = useCallback(
+    (id: string) => {
+      doc.set((d) => ({ ...d, stamps: d.stamps.filter((s) => s.id !== id) }));
+      setSelection((sel) => (sel?.kind === "stamp" && sel.id === id ? null : sel));
     },
     [doc],
   );
@@ -786,6 +808,7 @@ export function App() {
     setStatus("exporting");
     setMessage("Building edited PDF…");
     try {
+      const { exportPdf } = await import("./pdf/exporter");
       const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations, stamps });
       const blob = new Blob([out as BlobPart], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
@@ -939,7 +962,7 @@ export function App() {
 
   const propertiesPanel = (
     <PropertiesPanel
-      selection={selection}
+      selection={panelSelection}
       style={activeStyle}
       redactionColor={redactionColor}
       annotation={selectedAnnotation}
@@ -1059,6 +1082,7 @@ export function App() {
                 onChangeNoteText={onChangeNoteText}
                 onMoveAnnotation={onMoveAnnotation}
                 onChangeStamp={onChangeStamp}
+                onDeleteStamp={onDeleteStamp}
                 onAddTextBox={onAddTextBox}
                 onAddRedaction={onAddRedaction}
                 onAddAnnotation={onAddAnnotation}
@@ -1094,12 +1118,15 @@ export function App() {
           )}
         </div>
 
+        {/* Stamps (signatures/images) are manipulated directly on the canvas,
+            so they have no properties panel. On wide screens the panel is
+            persistent (empty state when nothing applicable is selected) so the
+            layout doesn't shift; on phones it's a bottom sheet shown only when
+            there's something to edit. */}
         {isWide ? (
-          /* Desktop/tablet: a persistent side panel (shows an empty state
-             when nothing is selected) so the layout doesn't shift. */
           <aside className="panel">{propertiesPanel}</aside>
         ) : (
-          selection && (
+          panelSelection && (
             <>
               {/* Mobile-only scrim: tap outside the sheet to dismiss. */}
               <div className="scrim" onPointerDown={() => setSelection(null)} />
@@ -1143,15 +1170,17 @@ export function App() {
       )}
 
       {sigOpen && (
-        <SignatureDialog
-          onClose={() => setSigOpen(false)}
-          onCreate={(sig) => {
-            setSigOpen(false);
-            setPendingStamp(sig);
-            setStatus("ready");
-            setMessage("Tap the page to place your signature.");
-          }}
-        />
+        <Suspense fallback={null}>
+          <SignatureDialog
+            onClose={() => setSigOpen(false)}
+            onCreate={(sig) => {
+              setSigOpen(false);
+              setPendingStamp(sig);
+              setStatus("ready");
+              setMessage("Tap the page to place your signature.");
+            }}
+          />
+        </Suspense>
       )}
 
       <input
@@ -1178,28 +1207,32 @@ export function App() {
       )}
 
       {finishTab && (
-        <FinishDialog
-          initialTab={finishTab}
-          onApplyNumbers={applyNumbers}
-          onApplyWatermark={applyWatermark}
-          onClose={() => setFinishTab(null)}
-        />
+        <Suspense fallback={null}>
+          <FinishDialog
+            initialTab={finishTab}
+            onApplyNumbers={applyNumbers}
+            onApplyWatermark={applyWatermark}
+            onClose={() => setFinishTab(null)}
+          />
+        </Suspense>
       )}
 
       {organizeOpen && pdf && (
-        <Organize
-          mainBytes={pdf.bytes}
-          fileName={fileName}
-          hasEdits={changeCount > 0}
-          onApply={(bytes, note) => {
-            setOrganizeOpen(false);
-            void openBytes(bytes, fileName, note);
-          }}
-          onExtract={(bytes) =>
-            downloadBytes(bytes, fileName.replace(/\.pdf$/i, "") + "-extract.pdf")
-          }
-          onClose={() => setOrganizeOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <Organize
+            mainBytes={pdf.bytes}
+            fileName={fileName}
+            hasEdits={changeCount > 0}
+            onApply={(bytes, note) => {
+              setOrganizeOpen(false);
+              void openBytes(bytes, fileName, note);
+            }}
+            onExtract={(bytes) =>
+              downloadBytes(bytes, fileName.replace(/\.pdf$/i, "") + "-extract.pdf")
+            }
+            onClose={() => setOrganizeOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
