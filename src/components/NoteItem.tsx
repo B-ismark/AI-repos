@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from "react";
 import { elementTap } from "../hooks/useDrag";
+import { placeCaretEnd } from "../caret";
 
 interface Props {
   id: string;
@@ -13,7 +14,6 @@ interface Props {
   interactive: boolean;
   editing: boolean;
   autoFocus: boolean;
-  revision: number;
   onSelect: (id: string) => void;
   /** Double-tap (touch) to enter edit mode on mobile. */
   onEdit?: (id: string) => void;
@@ -50,28 +50,28 @@ function NoteItemImpl({
   interactive,
   editing,
   autoFocus,
-  revision,
   onSelect,
   onEdit,
   onChangeText,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Re-seed the uncontrolled contentEditable from state only when it differs
+  // (no-op while typing, re-seed on undo/redo or other external change).
   useEffect(() => {
-    if (!ref.current) return;
-    if (ref.current.textContent !== text) ref.current.textContent = text;
-    if (autoFocus) {
-      ref.current.focus();
-      const r = document.createRange();
-      r.selectNodeContents(ref.current);
-      r.collapse(false);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(r);
-      ref.current.scrollIntoView({ block: "center", inline: "nearest" });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision]);
+    const el = ref.current;
+    if (!el || el.textContent === text) return;
+    el.textContent = text;
+    if (document.activeElement === el) placeCaretEnd(el);
+  }, [text]);
+
+  useEffect(() => {
+    if (!autoFocus || !ref.current) return;
+    const el = ref.current;
+    el.focus();
+    placeCaretEnd(el);
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [autoFocus]);
 
   return (
     <div

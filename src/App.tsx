@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageView, type AnnotSpec } from "./components/PageView";
 import { translateAnnotation } from "./components/AnnotationLayer";
 import { PropertiesPanel } from "./components/PropertiesPanel";
@@ -11,24 +11,27 @@ import { PageNav } from "./components/PageNav";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
 import { findMatches, extractText, type FindMatch } from "./pdf/find";
-import {
-  annotationBox,
-  boxCX,
-  boxCY,
-  linkBox,
-  redactionBox,
-  stampBox,
-  textBoxBox,
-  type Box,
-} from "./pdf/bbox";
+import { boxCX, boxCY } from "./pdf/bbox";
 import { useAutosave } from "./hooks/useAutosave";
-import type { PageNumberOptions, WatermarkOptions } from "./pdf/finishOps";
+import type { PageNumberOptions, WatermarkOptions } from "./pdf/types";
 import { useHistory } from "./hooks/useHistory";
 import { useMediaQuery } from "./hooks/useMediaQuery";
-import { usePersistentState } from "./hooks/usePrefs";
+import { usePersistentState, usePersistentFlag } from "./hooks/usePrefs";
 import { useTheme } from "./hooks/useTheme";
 import { useViewport } from "./hooks/useViewport";
-import { loadPdf } from "./pdf/loader";
+import { loadPdf, looksLikePdf } from "./pdf/loader";
+import {
+  OVERLAYS,
+  OVERLAY_LIST,
+  addOverlay,
+  applyOverlayDeltas,
+  findOverlay,
+  overlayExists,
+  overlaysInSet,
+  removeOverlay,
+  removeOverlaysByIds,
+  type OverlayKind,
+} from "./overlays";
 import { DEFAULT_STYLE, isFragmentModified, resolveFragmentStyle } from "./pdf/style";
 
 // On-demand modals — each pulls in heavy code (pdf-lib, canvas rendering) that
@@ -62,7 +65,11 @@ import type {
   Tool,
 } from "./pdf/types";
 
-type Status = "idle" | "loading" | "ready" | "exporting" | "error";
+// "exporting" is reserved for the primary Download action (drives the Download
+// button's label); "working" is every other long op (OCR, compress, watermark,
+// page numbers, image export) so they show the busy indicator without hijacking
+// the Download button.
+type Status = "idle" | "loading" | "ready" | "exporting" | "working" | "error";
 type NavKey = Tool | "sign";
 
 const EMPTY_DOC: DocState = { edits: {}, textBoxes: [], redactions: [], annotations: [], stamps: [] };
@@ -82,6 +89,24 @@ function pdfOpenError(err: unknown): string {
     return "This file doesn't look like a valid PDF, or it may be damaged.";
   return "Something went wrong opening this PDF. Try another file.";
 }
+
+/** A document/finishing action rendered identically across the overflow menu,
+ * the Inspector's document panel, and the command palette — one definition, so
+ * the three surfaces can't drift apart. */
+interface DocAction {
+  id: string;
+  group: "organise" | "text" | "finish";
+  label: string;
+  icon: string;
+  keywords?: string;
+  run: () => void;
+}
+
+const DOC_GROUPS: { key: DocAction["group"]; label: string }[] = [
+  { key: "organise", label: "Organise" },
+  { key: "text", label: "Text" },
+  { key: "finish", label: "Finish" },
+];
 
 const TOOLS: { key: NavKey; label: string; icon: string }[] = [
   { key: "select", label: "Select", icon: "arrow_selector_tool" },
@@ -126,6 +151,13 @@ function isTypingTarget(): boolean {
   );
 }
 
+/** True when a modal dialog (Organize, Finish, Compress, Command Palette, …)
+ * is open. Global editing shortcuts must not act on the hidden canvas beneath
+ * it. */
+function aModalIsOpen(): boolean {
+  return !!document.querySelector('[aria-modal="true"]');
+}
+
 export function App() {
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
   const [fileName, setFileName] = useState("document.pdf");
@@ -134,6 +166,8 @@ export function App() {
   const { edits, textBoxes, redactions, annotations, stamps } = doc.state;
   const links = doc.state.links ?? [];
   const formValues = doc.state.formValues ?? {};
+  const pageNumbers = doc.state.pageNumbers ?? null;
+  const watermark = doc.state.watermark ?? null;
   // Remembered across sessions so the user's choices aren't reset each time.
   const [drawTool, setDrawTool] = usePersistentState("pref.drawTool", "highlight") as [
     AnnotationTool,
@@ -150,24 +184,15 @@ export function App() {
   );
   // Dim the (always-white) page canvas to cut glare, esp. in dark mode.
   // Preview-only — never affects the exported PDF.
-  const [dimPages, setDimPages] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("pref.dimPages") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("pref.dimPages", dimPages ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [dimPages]);
+  const [dimPages, setDimPages] = usePersistentFlag("pref.dimPages", false);
   const [sigOpen, setSigOpen] = useState(false);
   const [finishTab, setFinishTab] = useState<"numbers" | "watermark" | null>(null);
   const [pendingStamp, setPendingStamp] = useState<{ dataUrl: string; w: number; h: number } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  // Always-mounted picker for "Open another PDF" (the dropzone's own input only
+  // exists on the empty state), so the action opens a file dialog directly
+  // rather than first clearing to the empty screen.
+  const openInputRef = useRef<HTMLInputElement>(null);
   const [selection, setSelection] = useState<Selection>(null);
   // Mobile: the full properties sheet only opens on demand (via the selection
   // bar), and text elements only become editable in an explicit edit mode —
@@ -176,9 +201,11 @@ export function App() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
+  // When a long, cancellable operation is running (OCR), this holds its
+  // cancel handler so the busy indicator can offer a Cancel button.
+  const [onCancel, setOnCancel] = useState<null | (() => void)>(null);
   const [dragging, setDragging] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [organizeOpen, setOrganizeOpen] = useState(false);
@@ -202,7 +229,7 @@ export function App() {
 
   const vp = useViewport();
   const theme = useTheme();
-  const { restorable, save: saveSession, clear: clearAutosave, dismissRestore } = useAutosave();
+  const { restorable, save: saveSession, dismissRestore } = useAutosave();
   // >=600px gets the persistent side panel + tool rail (Material Medium+);
   // <600px is the compact phone layout (contextual selection bar + on-demand
   // sheet, `sheetOpen` state above).
@@ -236,7 +263,12 @@ export function App() {
     [pdf, fragmentById, edits],
   );
   const changeCount =
-    editedFragmentCount + textBoxes.length + redactions.length + annotations.length + stamps.length + links.length + Object.keys(formValues).length;
+    editedFragmentCount + textBoxes.length + redactions.length + annotations.length + stamps.length + links.length + Object.keys(formValues).length +
+    (pageNumbers ? 1 : 0) + (watermark ? 1 : 0);
+
+  // A long-running operation is in flight (opening a file, exporting, OCR,
+  // finishing ops). Drives the busy spinner + prevents overlapping actions.
+  const busy = status === "loading" || status === "exporting" || status === "working";
 
   // ---- Find in document (Ctrl/⌘+F) ----
   const matches: FindMatch[] = useMemo(
@@ -352,7 +384,6 @@ export function App() {
         doc.reset(seedDoc ?? EMPTY_DOC);
         setSelection(null);
         setTool("select");
-        setRevision((r) => r + 1);
         vp.setPageWidth(Math.max(...loaded.pages.map((p) => p.viewBox.width), 1));
         vp.resetZoom();
         setStatus("ready");
@@ -368,12 +399,27 @@ export function App() {
 
   const openFile = useCallback(
     async (file: File) => {
-      if (file.type && file.type !== "application/pdf") {
+      // Show feedback immediately — reading a large file into memory and
+      // sniffing it can take a beat, and a drag-drop gives no other signal.
+      setStatus("loading");
+      setMessage(`Opening ${file.name}…`);
+      let bytes: ArrayBuffer;
+      try {
+        bytes = await file.arrayBuffer();
+      } catch {
         setStatus("error");
-        setMessage(`"${file.name}" is not a PDF.`);
+        setMessage(`Couldn't read "${file.name}".`);
         return;
       }
-      await openBytes(await file.arrayBuffer(), file.name);
+      // Trust the content, not the extension or MIME type: an HTML page or
+      // image renamed to .pdf (or dropped with an empty MIME type) must be
+      // rejected here rather than failing deep inside pdf.js.
+      if (!looksLikePdf(bytes)) {
+        setStatus("error");
+        setMessage(`"${file.name}" isn't a PDF file. Please choose a .pdf document.`);
+        return;
+      }
+      await openBytes(bytes, file.name);
     },
     [openBytes],
   );
@@ -387,6 +433,7 @@ export function App() {
       ...s.doc.redactions.map((r) => r.id),
       ...s.doc.annotations.map((a) => a.id),
       ...s.doc.stamps.map((st) => st.id),
+      ...(s.doc.links ?? []).map((l) => l.id),
     ];
     for (const id of ids) {
       const n = Number(id.split("-").pop());
@@ -396,15 +443,18 @@ export function App() {
     await openBytes(s.bytes, s.fileName, "Session restored.", s.doc);
   }, [restorable, dismissRestore, openBytes]);
 
-  const downloadBytes = useCallback((bytes: Uint8Array, filename: string) => {
-    const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, []);
+  const downloadBytes = useCallback(
+    (bytes: Uint8Array, filename: string, mime = "application/pdf") => {
+      const blob = new Blob([bytes as BlobPart], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    [],
+  );
 
   const toAB = (u8: Uint8Array): ArrayBuffer => {
     const ab = new ArrayBuffer(u8.byteLength);
@@ -415,57 +465,60 @@ export function App() {
   /** Export the current edits to fresh bytes so finishing ops build on them. */
   const bakeCurrent = useCallback(async (): Promise<ArrayBuffer> => {
     const { exportPdf } = await import("./pdf/exporter");
-    const out = await exportPdf(pdf!, { edits, textBoxes, redactions, annotations, stamps, links, formValues });
+    const out = await exportPdf(pdf!, { edits, textBoxes, redactions, annotations, stamps, links, formValues, pageNumbers, watermark });
     return toAB(out);
-  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues]);
+  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues, pageNumbers, watermark]);
 
+  // Page numbers and watermark are document-wide layers stored in DocState and
+  // drawn at export time (see exporter.ts). Setting them is a normal, undoable
+  // edit — no document rebuild, no lost history, and they preview live.
   const applyNumbers = useCallback(
-    async (opts: PageNumberOptions) => {
+    (opts: PageNumberOptions) => {
       setFinishTab(null);
-      setStatus("exporting");
-      setMessage("Adding page numbers…");
-      try {
-        const baked = await bakeCurrent();
-        const { addPageNumbers } = await import("./pdf/finishOps");
-        const res = await addPageNumbers(baked, opts);
-        await openBytes(toAB(res), fileName, "Page numbers added.");
-      } catch {
-        setStatus("error");
-        setMessage("Couldn't add page numbers. Please try again.");
-      }
+      doc.set((d) => ({ ...d, pageNumbers: opts }));
+      setStatus("ready");
+      setMessage("Page numbers added.");
     },
-    [bakeCurrent, openBytes, fileName],
+    [doc],
   );
+
+  const clearNumbers = useCallback(() => {
+    setFinishTab(null);
+    doc.set((d) => ({ ...d, pageNumbers: null }));
+    setStatus("ready");
+    setMessage("Page numbers removed.");
+  }, [doc]);
 
   const applyWatermark = useCallback(
-    async (opts: WatermarkOptions) => {
+    (opts: WatermarkOptions) => {
       setFinishTab(null);
-      setStatus("exporting");
-      setMessage("Applying watermark…");
-      try {
-        const baked = await bakeCurrent();
-        const { addWatermark } = await import("./pdf/finishOps");
-        const res = await addWatermark(baked, opts);
-        await openBytes(toAB(res), fileName, "Watermark applied.");
-      } catch {
-        setStatus("error");
-        setMessage("Couldn't apply the watermark. Please try again.");
-      }
+      doc.set((d) => ({ ...d, watermark: opts }));
+      setStatus("ready");
+      setMessage("Watermark applied.");
     },
-    [bakeCurrent, openBytes, fileName],
+    [doc],
   );
+
+  const clearWatermark = useCallback(() => {
+    setFinishTab(null);
+    doc.set((d) => ({ ...d, watermark: null }));
+    setStatus("ready");
+    setMessage("Watermark removed.");
+  }, [doc]);
 
   const applyCompress = useCallback(
     async (opts: import("./pdf/finishOps").CompressOptions) => {
       if (!pdf) return;
       setCompressOpen(false);
-      setStatus("exporting");
+      setStatus("working");
       setMessage("Compressing…");
       try {
         const baked = await bakeCurrent();
         const { compressPdf } = await import("./pdf/finishOps");
         const sizes = pdf.pages.map((p) => ({ width: p.viewBox.width, height: p.viewBox.height }));
-        const compressed = await compressPdf(baked, sizes, opts);
+        const compressed = await compressPdf(baked, sizes, opts, (p, t) =>
+          setMessage(`Compressing… page ${p}/${t}`),
+        );
         const before = baked.byteLength;
         const after = compressed.byteLength;
         // Rasterising a text/vector PDF can produce a *larger* file than the
@@ -499,12 +552,18 @@ export function App() {
   const runOcr = useCallback(async () => {
     if (!pdf) return;
     setMenuOpen(false);
-    setStatus("exporting");
+    const ctrl = new AbortController();
+    setOnCancel(() => () => ctrl.abort());
+    setStatus("working");
     setMessage("Reading text (OCR)…");
     try {
       const { ocrPages } = await import("./pdf/ocr");
-      const map = await ocrPages(pdf.bytes, pdf.pages, (p, t) =>
-        setMessage(`Reading text… page ${p}/${t}`),
+      const map = await ocrPages(
+        pdf.bytes,
+        pdf.pages,
+        (p, t) =>
+          setMessage(p === 0 ? "Starting OCR engine…" : `Reading text… page ${p}/${t}`),
+        ctrl.signal,
       );
       let added = 0;
       const pages = pdf.pages.map((pg) => {
@@ -515,7 +574,6 @@ export function App() {
         return { ...pg, fragments: [...kept, ...extra] };
       });
       setPdf({ ...pdf, pages });
-      setRevision((r) => r + 1);
       setStatus("ready");
       setMessage(
         added > 0
@@ -523,40 +581,73 @@ export function App() {
           : "No recognisable text found.",
       );
     } catch (err) {
-      setStatus("error");
-      setMessage(
-        (err as Error)?.name === "OcrAssetsMissing"
-          ? "On-device OCR isn't set up in this build — run `npm run setup-ocr` to enable it."
-          : "OCR failed on this document. Please try again.",
-      );
+      const name = (err as Error)?.name;
+      if (name === "OcrCancelled") {
+        setStatus("idle");
+        setMessage("OCR cancelled.");
+      } else if (name === "OcrAssetsMissing") {
+        console.warn("OCR assets missing — run `npm run setup-ocr` to enable on-device text recognition.");
+        setStatus("error");
+        setMessage("Text recognition isn't available in this version.");
+      } else {
+        setStatus("error");
+        setMessage("OCR couldn't finish on this document. It may be very large or image-heavy — try again.");
+      }
+    } finally {
+      setOnCancel(null);
     }
   }, [pdf]);
 
   const exportImages = useCallback(async () => {
     if (!pdf) return;
     setMenuOpen(false);
-    setStatus("exporting");
+    setStatus("working");
     setMessage("Rendering images…");
     try {
       const baked = await bakeCurrent();
       const { renderImages } = await import("./pdf/finishOps");
-      const urls = await renderImages(baked, pdf.pages.length, 2);
+      const urls = await renderImages(baked, pdf.pages.length, 2, (p, t) =>
+        setMessage(`Rendering images… page ${p}/${t}`),
+      );
       const base = fileName.replace(/\.pdf$/i, "");
-      urls.forEach((url, i) => {
-        setTimeout(() => {
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${base}-p${i + 1}.png`;
-          a.click();
-        }, i * 300);
-      });
-      setStatus("ready");
-      setMessage(`Exported ${urls.length} image(s).`);
+      const { makeZip, dataUrlToBytes } = await import("./pdf/zip");
+      if (urls.length === 1) {
+        // A single page downloads as a plain PNG — friendlier than a one-file zip.
+        downloadBytes(dataUrlToBytes(urls[0]), `${base}.png`, "image/png");
+        setStatus("ready");
+        setMessage("Exported 1 image.");
+      } else {
+        // Bundle every page into one ZIP so no download is blocked and the
+        // success message is honest (browsers block the 2nd+ auto-download).
+        setMessage("Packaging images…");
+        const zip = makeZip(urls.map((u, i) => ({ name: `${base}-p${i + 1}.png`, data: dataUrlToBytes(u) })));
+        downloadBytes(zip, `${base}-images.zip`, "application/zip");
+        setStatus("ready");
+        setMessage(`Exported ${urls.length} images as a ZIP.`);
+      }
     } catch {
       setStatus("error");
       setMessage("Couldn't export images. Please try again.");
     }
-  }, [pdf, bakeCurrent, fileName]);
+  }, [pdf, bakeCurrent, fileName, downloadBytes]);
+
+  // Single source of truth for the document/finishing actions. The overflow
+  // menu, the document panel, and the command palette all render from this —
+  // add an action once and every surface picks it up.
+  const docActions = useMemo<DocAction[]>(
+    () => [
+      { id: "organize", group: "organise", label: "Organize pages", icon: "layers", keywords: "reorder rotate merge split extract", run: () => { setSelection(null); setOrganizeOpen(true); } },
+      { id: "image", group: "organise", label: "Add image", icon: "image", keywords: "picture photo stamp", run: () => imageInputRef.current?.click() },
+      { id: "ocr", group: "text", label: "OCR — recognise text", icon: "scan_text", keywords: "scan searchable image", run: runOcr },
+      { id: "copytext", group: "text", label: "Copy all text", icon: "content_copy", keywords: "clipboard", run: copyAllText },
+      { id: "exporttext", group: "text", label: "Export text (.txt)", icon: "download", keywords: "save txt plain", run: exportTextFile },
+      { id: "numbers", group: "finish", label: "Page numbers", icon: "tag", keywords: "pagination folio", run: () => { setSelection(null); setFinishTab("numbers"); } },
+      { id: "watermark", group: "finish", label: "Watermark", icon: "watermark", keywords: "draft stamp", run: () => { setSelection(null); setFinishTab("watermark"); } },
+      { id: "eximg", group: "finish", label: "Export as images", icon: "image", keywords: "png zip export", run: exportImages },
+      { id: "compress", group: "finish", label: "Compress PDF", icon: "compress", keywords: "shrink reduce size optimise", run: () => { setSelection(null); setCompressOpen(true); } },
+    ],
+    [runOcr, copyAllText, exportTextFile, exportImages],
+  );
 
   const onChangeFragmentText = useCallback(
     (id: string, text: string) => {
@@ -802,7 +893,6 @@ export function App() {
     if (!selection) return;
     setEditingId(selection.id);
     setAutoFocusId(selection.id);
-    setRevision((r) => r + 1);
   }, [selection]);
 
   /** Select a text element and immediately enter edit mode (double-tap on
@@ -813,7 +903,6 @@ export function App() {
     setSheetOpen(false);
     setEditingId(sel.id);
     setAutoFocusId(sel.id);
-    setRevision((r) => r + 1);
   }, []);
 
   // Deselecting also exits edit mode and closes the on-demand sheet.
@@ -927,7 +1016,6 @@ export function App() {
       }));
     }
     setLastTextStyle(DEFAULT_STYLE);
-    setRevision((r) => r + 1);
   }, [selection, doc, setLastTextStyle]);
 
   const onChangeRedactionColor = useCallback(
@@ -943,27 +1031,10 @@ export function App() {
   );
 
   const onDelete = useCallback(() => {
-    if (selection?.kind === "textbox") {
-      const id = selection.id;
-      doc.set((d) => ({ ...d, textBoxes: d.textBoxes.filter((b) => b.id !== id) }));
-      setSelection(null);
-    } else if (selection?.kind === "redaction") {
-      const id = selection.id;
-      doc.set((d) => ({ ...d, redactions: d.redactions.filter((r) => r.id !== id) }));
-      setSelection(null);
-    } else if (selection?.kind === "annotation") {
-      const id = selection.id;
-      doc.set((d) => ({ ...d, annotations: d.annotations.filter((a) => a.id !== id) }));
-      setSelection(null);
-    } else if (selection?.kind === "stamp") {
-      const id = selection.id;
-      doc.set((d) => ({ ...d, stamps: d.stamps.filter((s) => s.id !== id) }));
-      setSelection(null);
-    } else if (selection?.kind === "link") {
-      const id = selection.id;
-      doc.set((d) => ({ ...d, links: (d.links ?? []).filter((l) => l.id !== id) }));
-      setSelection(null);
-    }
+    if (!selection || selection.kind === "fragment") return;
+    const { kind, id } = selection;
+    doc.set((d) => removeOverlay(d, kind, id));
+    setSelection(null);
   }, [selection, doc]);
 
   // Command palette (Ctrl/⌘+K) — a global toggle independent of focus.
@@ -971,7 +1042,8 @@ export function App() {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setCmdOpen((v) => !v);
+        // Don't stack the palette over another modal; still allow closing it.
+        setCmdOpen((v) => (v ? false : !aModalIsOpen()));
       }
     };
     window.addEventListener("keydown", h);
@@ -979,70 +1051,27 @@ export function App() {
   }, []);
 
   // ---- Duplicate / copy-paste of overlay objects ----
-  type ClipItem =
-    | { kind: "textbox"; obj: TextBox }
-    | { kind: "redaction"; obj: Redaction }
-    | { kind: "annotation"; obj: Annotation }
-    | { kind: "stamp"; obj: Stamp }
-    | { kind: "link"; obj: LinkAnnot };
+  // Paste offset — a slight down-right nudge so the copy doesn't sit exactly
+  // on top of the original.
+  const PASTE_DX = 12;
+  const PASTE_DY = -12;
+  type ClipItem = { kind: OverlayKind; obj: { id: string } };
   const clipboard = useRef<ClipItem | null>(null);
 
   const selectedClip = useCallback((): ClipItem | null => {
-    if (!selection) return null;
-    if (selection.kind === "textbox") {
-      const obj = textBoxes.find((b) => b.id === selection.id);
-      return obj ? { kind: "textbox", obj } : null;
-    }
-    if (selection.kind === "redaction") {
-      const obj = redactions.find((r) => r.id === selection.id);
-      return obj ? { kind: "redaction", obj } : null;
-    }
-    if (selection.kind === "annotation") {
-      const obj = annotations.find((a) => a.id === selection.id);
-      return obj ? { kind: "annotation", obj } : null;
-    }
-    if (selection.kind === "stamp") {
-      const obj = stamps.find((s) => s.id === selection.id);
-      return obj ? { kind: "stamp", obj } : null;
-    }
-    if (selection.kind === "link") {
-      const obj = links.find((l) => l.id === selection.id);
-      return obj ? { kind: "link", obj } : null;
-    }
-    return null;
-  }, [selection, textBoxes, redactions, annotations, stamps, links]);
+    if (!selection || selection.kind === "fragment") return null;
+    const obj = findOverlay(doc.state, selection.kind, selection.id);
+    return obj ? { kind: selection.kind, obj } : null;
+  }, [selection, doc]);
 
   /** Add a copy of a clipboard item, offset slightly, and select it. */
   const pasteItem = useCallback(
     (item: ClipItem) => {
-      const dx = 12;
-      const dy = -12;
-      if (item.kind === "textbox") {
-        const id = nextId("tb");
-        const b = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
-        doc.set((d) => ({ ...d, textBoxes: [...d.textBoxes, b] }));
-        setSelection({ kind: "textbox", id });
-      } else if (item.kind === "redaction") {
-        const id = nextId("rd");
-        const r = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
-        doc.set((d) => ({ ...d, redactions: [...d.redactions, r] }));
-        setSelection({ kind: "redaction", id });
-      } else if (item.kind === "link") {
-        const id = nextId("ln");
-        const l = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
-        doc.set((d) => ({ ...d, links: [...(d.links ?? []), l] }));
-        setSelection({ kind: "link", id });
-      } else if (item.kind === "stamp") {
-        const id = nextId("st");
-        const s = { ...item.obj, id, x: item.obj.x + dx, y: item.obj.y + dy };
-        doc.set((d) => ({ ...d, stamps: [...d.stamps, s] }));
-        setSelection({ kind: "stamp", id });
-      } else {
-        const id = nextId("an");
-        const a = { ...translateAnnotation(item.obj, dx, dy), id } as Annotation;
-        doc.set((d) => ({ ...d, annotations: [...d.annotations, a] }));
-        setSelection({ kind: "annotation", id });
-      }
+      const def = OVERLAYS[item.kind];
+      const id = nextId(def.idPrefix);
+      const copy = { ...def.translate(item.obj, PASTE_DX, PASTE_DY), id };
+      doc.set((d) => addOverlay(d, item.kind, copy));
+      setSelection({ kind: item.kind, id });
     },
     [doc],
   );
@@ -1054,7 +1083,7 @@ export function App() {
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || isTypingTarget()) return;
+      if (!(e.metaKey || e.ctrlKey) || isTypingTarget() || aModalIsOpen()) return;
       const key = e.key.toLowerCase();
       if (key === "d") {
         if (!selection) return;
@@ -1088,43 +1117,15 @@ export function App() {
     if (selection) setMulti([]);
   }, [selection]);
 
-  const multiItems = useMemo(() => {
-    const set = new Set(multi);
-    const items: { id: string; kind: string; box: Box }[] = [];
-    textBoxes.forEach((b) => set.has(b.id) && items.push({ id: b.id, kind: "textbox", box: textBoxBox(b) }));
-    redactions.forEach((r) => set.has(r.id) && items.push({ id: r.id, kind: "redaction", box: redactionBox(r) }));
-    annotations.forEach((a) => set.has(a.id) && items.push({ id: a.id, kind: "annotation", box: annotationBox(a) }));
-    stamps.forEach((s) => set.has(s.id) && items.push({ id: s.id, kind: "stamp", box: stampBox(s) }));
-    links.forEach((l) => set.has(l.id) && items.push({ id: l.id, kind: "link", box: linkBox(l) }));
-    return items;
-  }, [multi, textBoxes, redactions, annotations, stamps, links]);
+  const multiItems = useMemo(
+    () => overlaysInSet(doc.state, new Set(multi)),
+    [multi, doc.state],
+  );
 
   /** Apply per-id {dx,dy} deltas to every overlay object in one undo step. */
   const applyDeltas = useCallback(
     (deltas: Map<string, { dx: number; dy: number }>) => {
-      doc.set((d) => ({
-        ...d,
-        textBoxes: d.textBoxes.map((b) => {
-          const m = deltas.get(b.id);
-          return m ? { ...b, x: b.x + m.dx, y: b.y + m.dy } : b;
-        }),
-        redactions: d.redactions.map((r) => {
-          const m = deltas.get(r.id);
-          return m ? { ...r, x: r.x + m.dx, y: r.y + m.dy } : r;
-        }),
-        annotations: d.annotations.map((a) => {
-          const m = deltas.get(a.id);
-          return m ? translateAnnotation(a, m.dx, m.dy) : a;
-        }),
-        stamps: d.stamps.map((s) => {
-          const m = deltas.get(s.id);
-          return m ? { ...s, x: s.x + m.dx, y: s.y + m.dy } : s;
-        }),
-        links: (d.links ?? []).map((l) => {
-          const m = deltas.get(l.id);
-          return m ? { ...l, x: l.x + m.dx, y: l.y + m.dy } : l;
-        }),
-      }));
+      doc.set((d) => applyOverlayDeltas(d, deltas));
     },
     [doc],
   );
@@ -1179,43 +1180,23 @@ export function App() {
   const deleteMulti = useCallback(() => {
     const set = new Set(multi);
     if (set.size === 0) return;
-    doc.set((d) => ({
-      ...d,
-      textBoxes: d.textBoxes.filter((b) => !set.has(b.id)),
-      redactions: d.redactions.filter((r) => !set.has(r.id)),
-      annotations: d.annotations.filter((a) => !set.has(a.id)),
-      stamps: d.stamps.filter((s) => !set.has(s.id)),
-      links: (d.links ?? []).filter((l) => !set.has(l.id)),
-    }));
+    doc.set((d) => removeOverlaysByIds(d, set));
     setMulti([]);
   }, [multi, doc]);
 
   const duplicateMulti = useCallback(() => {
     if (multiItems.length === 0) return;
-    const dx = 12, dy = -12;
+    const set = new Set(multi);
     const newIds: string[] = [];
     doc.set((d) => {
-      const next = { ...d, links: d.links ?? [] };
-      const set = new Set(multi);
-      for (const b of d.textBoxes.filter((x) => set.has(x.id))) {
-        const id = nextId("tb"); newIds.push(id);
-        next.textBoxes = [...next.textBoxes, { ...b, id, x: b.x + dx, y: b.y + dy }];
-      }
-      for (const r of d.redactions.filter((x) => set.has(x.id))) {
-        const id = nextId("rd"); newIds.push(id);
-        next.redactions = [...next.redactions, { ...r, id, x: r.x + dx, y: r.y + dy }];
-      }
-      for (const s of d.stamps.filter((x) => set.has(x.id))) {
-        const id = nextId("st"); newIds.push(id);
-        next.stamps = [...next.stamps, { ...s, id, x: s.x + dx, y: s.y + dy }];
-      }
-      for (const l of next.links.filter((x) => set.has(x.id))) {
-        const id = nextId("ln"); newIds.push(id);
-        next.links = [...next.links, { ...l, id, x: l.x + dx, y: l.y + dy }];
-      }
-      for (const a of d.annotations.filter((x) => set.has(x.id))) {
-        const id = nextId("an"); newIds.push(id);
-        next.annotations = [...next.annotations, { ...translateAnnotation(a, dx, dy), id }];
+      let next = d;
+      for (const def of OVERLAY_LIST) {
+        for (const item of def.get(d)) {
+          if (!set.has(item.id)) continue;
+          const id = nextId(def.idPrefix);
+          newIds.push(id);
+          next = addOverlay(next, def.kind, { ...def.translate(item, PASTE_DX, PASTE_DY), id });
+        }
       }
       return next;
     });
@@ -1255,26 +1236,20 @@ export function App() {
 
   const undo = useCallback(() => {
     doc.undo();
-    setRevision((r) => r + 1);
   }, [doc]);
   const redo = useCallback(() => {
     doc.redo();
-    setRevision((r) => r + 1);
   }, [doc]);
 
   useEffect(() => {
-    if (selection?.kind === "textbox" && !textBoxes.some((b) => b.id === selection.id)) {
-      setSelection(null);
-    } else if (selection?.kind === "redaction" && !redactions.some((r) => r.id === selection.id)) {
-      setSelection(null);
-    } else if (selection?.kind === "annotation" && !annotations.some((a) => a.id === selection.id)) {
-      setSelection(null);
-    } else if (selection?.kind === "stamp" && !stamps.some((s) => s.id === selection.id)) {
-      setSelection(null);
-    } else if (selection?.kind === "link" && !links.some((l) => l.id === selection.id)) {
+    if (
+      selection &&
+      selection.kind !== "fragment" &&
+      !overlayExists(doc.state, selection.kind, selection.id)
+    ) {
       setSelection(null);
     }
-  }, [textBoxes, redactions, annotations, stamps, links, selection]);
+  }, [doc.state, selection]);
 
   // Warn before leaving/reloading the tab while there are unsaved changes.
   // Everything lives in memory (no server, no autosave), so an accidental
@@ -1289,15 +1264,20 @@ export function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [changeCount]);
 
-  // Auto-dismiss transient status messages (keep errors until superseded).
+  // Auto-dismiss transient status messages (keep errors and in-progress
+  // messages until superseded).
   useEffect(() => {
-    if (!message || status === "error" || status === "loading" || status === "exporting") return;
+    if (!message || status === "error" || busy) return;
     const t = setTimeout(() => setMessage(""), 4000);
     return () => clearTimeout(t);
-  }, [message, status]);
+  }, [message, status, busy]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // A modal (Organize / Finish / Compress / Command Palette) owns the
+      // keyboard while it's open — don't undo/redo/find/delete on the canvas
+      // hidden beneath it. Modals manage their own Escape via useModal.
+      if (aModalIsOpen()) return;
       const mod = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
       if (mod && key === "z") {
@@ -1460,7 +1440,11 @@ export function App() {
     setMessage("Building edited PDF…");
     try {
       const { exportPdf } = await import("./pdf/exporter");
-      const out = await exportPdf(pdf, { edits, textBoxes, redactions, annotations, stamps, links, formValues });
+      const out = await exportPdf(
+        pdf,
+        { edits, textBoxes, redactions, annotations, stamps, links, formValues, pageNumbers, watermark },
+        (p, t) => setMessage(`Building edited PDF… page ${p}/${t}`),
+      );
       const blob = new Blob([out as BlobPart], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1478,25 +1462,22 @@ export function App() {
       setStatus("error");
       setMessage("Couldn't build the edited PDF. Please try again.");
     }
-  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues, fileName]);
+  }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues, pageNumbers, watermark, fileName]);
 
-  const doReset = useCallback(() => {
-    setPdf(null);
-    doc.reset(EMPTY_DOC);
-    setSelection(null);
-    setTool("select");
-    setStatus("idle");
-    setMessage("");
-    setMenuOpen(false);
+  // Open the OS file picker to load a different document in place of the
+  // current one (loading a new file replaces the working doc + autosave).
+  const openAnother = useCallback(() => {
     setConfirmReset(false);
-    clearAutosave();
-  }, [doc, clearAutosave]);
+    openInputRef.current?.click();
+  }, []);
 
   const reset = useCallback(() => {
     setMenuOpen(false);
+    // Loading a new file discards the current edits, so confirm first when
+    // there's unsaved work; otherwise go straight to the picker.
     if (changeCount > 0) setConfirmReset(true);
-    else doReset();
-  }, [changeCount, doReset]);
+    else openAnother();
+  }, [changeCount, openAnother]);
 
   const pickTool = (t: NavKey) => {
     setPendingStamp(null);
@@ -1545,8 +1526,12 @@ export function App() {
           <span className="appbar__changes label-medium">
             {changeCount > 0 ? `${changeCount} change${changeCount === 1 ? "" : "s"}` : ""}
           </span>
-          <button className="btn btn--filled appbar__download" onClick={download} disabled={status === "exporting"}>
-            <Icon name="download" size={16} />
+          <button className="btn btn--filled appbar__download" onClick={download} disabled={busy}>
+            {status === "exporting" ? (
+              <span className="spinner spinner--sm spinner--on-primary" aria-hidden="true" />
+            ) : (
+              <Icon name="download" size={16} />
+            )}
             <span>{status === "exporting" ? "Exporting…" : "Download"}</span>
           </button>
           <div className="menu">
@@ -1557,62 +1542,23 @@ export function App() {
               <>
                 <div className="menu__scrim" onClick={() => setMenuOpen(false)} />
                 <div className="menu__list" role="menu" ref={menuListRef} onKeyDown={onMenuKeyDown}>
-                  <button
-                    className="menu__item"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setSelection(null);
-                      setOrganizeOpen(true);
-                    }}
-                    role="menuitem"
-                  >
-                    <Icon name="select" size={18} /> Organize pages
-                  </button>
-                  <button
-                    className="menu__item"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      imageInputRef.current?.click();
-                    }}
-                    role="menuitem"
-                  >
-                    <Icon name="image" size={18} /> Add image
-                  </button>
-                  <div className="menu__divider" />
-                  <button
-                    className="menu__item"
-                    onClick={() => { setMenuOpen(false); setSelection(null); setFinishTab("numbers"); }}
-                    role="menuitem"
-                  >
-                    <Icon name="tag" size={18} /> Page numbers
-                  </button>
-                  <button
-                    className="menu__item"
-                    onClick={() => { setMenuOpen(false); setSelection(null); setFinishTab("watermark"); }}
-                    role="menuitem"
-                  >
-                    <Icon name="watermark" size={18} /> Watermark
-                  </button>
-                  <button className="menu__item" onClick={exportImages} role="menuitem">
-                    <Icon name="image" size={18} /> Export as images
-                  </button>
-                  <button
-                    className="menu__item"
-                    onClick={() => { setMenuOpen(false); setSelection(null); setCompressOpen(true); }}
-                    role="menuitem"
-                  >
-                    <Icon name="compress" size={18} /> Compress PDF
-                  </button>
-                  <button className="menu__item" onClick={runOcr} role="menuitem">
-                    <Icon name="scan_text" size={18} /> OCR (recognise text)
-                  </button>
-                  <div className="menu__divider" />
-                  <button className="menu__item" onClick={copyAllText} role="menuitem">
-                    <Icon name="content_copy" size={18} /> Copy all text
-                  </button>
-                  <button className="menu__item" onClick={exportTextFile} role="menuitem">
-                    <Icon name="scan_text" size={18} /> Export text (.txt)
-                  </button>
+                  {DOC_GROUPS.map((grp, gi) => (
+                    <Fragment key={grp.key}>
+                      {gi > 0 && <div className="menu__divider" />}
+                      {docActions
+                        .filter((a) => a.group === grp.key)
+                        .map((a) => (
+                          <button
+                            key={a.id}
+                            className="menu__item"
+                            role="menuitem"
+                            onClick={() => { setMenuOpen(false); a.run(); }}
+                          >
+                            <Icon name={a.icon} size={18} /> {a.label}
+                          </button>
+                        ))}
+                    </Fragment>
+                  ))}
                   <div className="menu__divider" />
                   <button
                     className="menu__item"
@@ -1670,36 +1616,18 @@ export function App() {
         <span className="props__title title-medium">Document</span>
       </div>
       <div className="doclist">
-        <span className="doclist__label label-medium">Organise</span>
-        <button className="doclist__item" onClick={() => { setSelection(null); setOrganizeOpen(true); }}>
-          <Icon name="layers" size={18} /> Reorder / merge pages
-        </button>
-        <button className="doclist__item" onClick={() => imageInputRef.current?.click()}>
-          <Icon name="image" size={18} /> Add image
-        </button>
-        <span className="doclist__label label-medium">Recognise text</span>
-        <button className="doclist__item" onClick={runOcr}>
-          <Icon name="scan_text" size={18} /> OCR (make scans searchable)
-        </button>
-        <button className="doclist__item" onClick={copyAllText}>
-          <Icon name="content_copy" size={18} /> Copy all text
-        </button>
-        <span className="doclist__label label-medium">Finish</span>
-        <button className="doclist__item" onClick={() => { setSelection(null); setFinishTab("numbers"); }}>
-          <Icon name="tag" size={18} /> Page numbers
-        </button>
-        <button className="doclist__item" onClick={() => { setSelection(null); setFinishTab("watermark"); }}>
-          <Icon name="watermark" size={18} /> Watermark
-        </button>
-        <button className="doclist__item" onClick={exportImages}>
-          <Icon name="image" size={18} /> Export as images
-        </button>
-        <button className="doclist__item" onClick={() => { setSelection(null); setCompressOpen(true); }}>
-          <Icon name="compress" size={18} /> Compress PDF
-        </button>
-        <button className="doclist__item" onClick={exportTextFile}>
-          <Icon name="content_copy" size={18} /> Export text (.txt)
-        </button>
+        {DOC_GROUPS.map((grp) => (
+          <Fragment key={grp.key}>
+            <span className="doclist__label label-medium">{grp.label}</span>
+            {docActions
+              .filter((a) => a.group === grp.key)
+              .map((a) => (
+                <button key={a.id} className="doclist__item" onClick={a.run}>
+                  <Icon name={a.icon} size={18} /> {a.label}
+                </button>
+              ))}
+          </Fragment>
+        ))}
       </div>
     </div>
   );
@@ -1747,7 +1675,11 @@ export function App() {
               <Icon name="upload_file" size={18} /> Choose PDF
             </button>
             <p className="body-small dropzone__hint">or drag &amp; drop a file here</p>
-            {status === "loading" && <p className="body-small dropzone__note">{message}</p>}
+            {status === "loading" && (
+              <p className="body-small dropzone__note">
+                <span className="spinner spinner--sm" aria-hidden="true" /> {message}
+              </p>
+            )}
             {status === "error" && <p className="body-small dropzone__err">{message}</p>}
           </div>
           <input
@@ -1805,6 +1737,8 @@ export function App() {
                 stamps={stamps.filter((s) => s.pageIndex === page.pageIndex)}
                 links={links.filter((l) => l.pageIndex === page.pageIndex)}
                 formValues={formValues}
+                pageNumbers={pageNumbers}
+                watermark={watermark}
                 multiIds={multiIds}
                 placing={!!pendingStamp}
                 findMatches={matchesByPage.get(page.pageIndex)}
@@ -1813,7 +1747,6 @@ export function App() {
                 autoFocusId={autoFocusId}
                 editingId={editingId}
                 compact={compact}
-                revision={revision}
                 onSelect={onSelect}
                 onEditText={enterEdit}
                 onChangeFragmentText={onChangeFragmentText}
@@ -1993,10 +1926,16 @@ export function App() {
       </div>
       {message && (
         <div
-          className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}`}
+          className={`snackbar body-medium${status === "error" ? " snackbar--err" : ""}${busy ? " snackbar--busy" : ""}`}
           aria-hidden="true"
         >
-          {message}
+          {busy && <span className="spinner spinner--sm" aria-hidden="true" />}
+          <span className="snackbar__msg">{message}</span>
+          {busy && onCancel && (
+            <button className="snackbar__cancel" onClick={() => onCancel()}>
+              Cancel
+            </button>
+          )}
         </div>
       )}
 
@@ -2026,13 +1965,25 @@ export function App() {
         }}
       />
 
+      <input
+        ref={openInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void openFile(f);
+          e.target.value = "";
+        }}
+      />
+
       {confirmReset && (
         <ConfirmDialog
           title="Open a different PDF?"
           message="This discards all your current changes."
           confirmLabel="Discard & open"
           danger
-          onConfirm={doReset}
+          onConfirm={openAnother}
           onCancel={() => setConfirmReset(false)}
         />
       )}
@@ -2041,8 +1992,12 @@ export function App() {
         <Suspense fallback={null}>
           <FinishDialog
             initialTab={finishTab}
+            currentNumbers={pageNumbers}
+            currentWatermark={watermark}
             onApplyNumbers={applyNumbers}
             onApplyWatermark={applyWatermark}
+            onClearNumbers={clearNumbers}
+            onClearWatermark={clearWatermark}
             onClose={() => setFinishTab(null)}
           />
         </Suspense>
@@ -2071,15 +2026,8 @@ export function App() {
               { id: "pages", label: "Toggle page thumbnails", icon: "panel", run: () => setNavOpen((v) => !v) },
               { id: "undo", label: "Undo", hint: "Ctrl+Z", icon: "undo", disabled: !doc.canUndo, run: undo },
               { id: "redo", label: "Redo", hint: "Ctrl+Shift+Z", icon: "redo", disabled: !doc.canRedo, run: redo },
-              { id: "organize", label: "Organize pages", icon: "layers", keywords: "reorder rotate merge split", run: () => { setSelection(null); setOrganizeOpen(true); } },
-              { id: "image", label: "Add image", icon: "image", run: () => imageInputRef.current?.click() },
-              { id: "numbers", label: "Add page numbers", icon: "tag", run: () => { setSelection(null); setFinishTab("numbers"); } },
-              { id: "watermark", label: "Add watermark", icon: "watermark", run: () => { setSelection(null); setFinishTab("watermark"); } },
-              { id: "eximg", label: "Export as images", icon: "image", run: exportImages },
-              { id: "compress", label: "Compress / optimise PDF", icon: "compress", keywords: "shrink reduce size", run: () => setCompressOpen(true) },
-              { id: "ocr", label: "OCR — recognise text", icon: "scan_text", keywords: "scan searchable image", run: runOcr },
-              { id: "copytext", label: "Copy all text", icon: "content_copy", run: copyAllText },
-              { id: "exporttext", label: "Export text (.txt)", icon: "scan_text", run: exportTextFile },
+              // Document/finishing actions come from the shared source of truth.
+              ...docActions.map((a) => ({ id: a.id, label: a.label, icon: a.icon, keywords: a.keywords, run: a.run })),
               { id: "dim", label: dimPages ? "Undim pages" : "Dim pages", icon: "contrast", run: () => setDimPages((v) => !v) },
               { id: "theme", label: `Theme: ${themeLabel}`, icon: themeIcon, keywords: "dark light system", run: theme.cycle },
               { id: "download", label: "Download PDF", hint: "", icon: "download", run: download },

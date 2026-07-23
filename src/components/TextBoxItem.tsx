@@ -2,6 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import { CSS_FONT } from "../pdf/style";
 import { elementTap, startPointerDrag } from "../hooks/useDrag";
 import { clearGuides, setGuides, snapBox } from "../hooks/useSnap";
+import { placeCaretEnd } from "../caret";
 import type { TextBox } from "../pdf/types";
 
 interface Props {
@@ -14,8 +15,6 @@ interface Props {
   /** Typing allowed now (always on desktop; edit mode only on mobile). */
   editing: boolean;
   autoFocus: boolean;
-  /** Bumps on undo/redo so the editable text is re-seeded from state. */
-  revision: number;
   onSelect: (id: string) => void;
   /** Double-tap (touch) to enter edit mode on mobile. */
   onEdit?: (id: string) => void;
@@ -36,7 +35,6 @@ function TextBoxItemImpl({
   interactive,
   editing,
   autoFocus,
-  revision,
   onSelect,
   onEdit,
   onChangeText,
@@ -46,22 +44,25 @@ function TextBoxItemImpl({
   const gesture = useRef(0);
   const H = pageHeight;
 
-  // Seed on mount, and re-seed when an undo/redo changes the stored text.
+  // Re-seed the uncontrolled contentEditable from state only when it actually
+  // differs — a no-op while typing (no caret jump), a re-seed on undo/redo or
+  // any other external change. See EditableFragment for the rationale.
   useEffect(() => {
-    if (!ref.current) return;
-    if (ref.current.textContent !== box.text) ref.current.textContent = box.text;
-    if (autoFocus) {
-      ref.current.focus();
-      const range = document.createRange();
-      range.selectNodeContents(ref.current);
-      range.collapse(false);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-      ref.current.scrollIntoView({ block: "center", inline: "nearest" });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision]);
+    const el = ref.current;
+    if (!el || el.textContent === box.text) return;
+    el.textContent = box.text;
+    if (document.activeElement === el) placeCaretEnd(el);
+  }, [box.text]);
+
+  // Enter edit (mobile "Edit", or a freshly added box): focus, caret to end,
+  // and scroll into view above the keyboard.
+  useEffect(() => {
+    if (!autoFocus || !ref.current) return;
+    const el = ref.current;
+    el.focus();
+    placeCaretEnd(el);
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+  }, [autoFocus]);
 
   const fontPx = box.style.size * scale;
   const left = box.x * scale;

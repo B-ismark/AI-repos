@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "./Icon";
+import { useModal } from "../hooks/useModal";
 import type { CompressOptions } from "../pdf/finishOps";
 
 interface Props {
@@ -17,10 +18,13 @@ const PRESETS: { key: string; label: string; hint: string; opts: CompressOptions
  * image), which is called out so the trade-off is clear. */
 export function CompressDialog({ onApply, onClose }: Props) {
   const [sel, setSel] = useState("balanced");
+  const modalRef = useModal<HTMLDivElement>(onClose);
 
   return (
     <div className="dialog-scrim" onPointerDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="dialog dialog--sm"
         role="dialog"
         aria-modal="true"
