@@ -1,5 +1,7 @@
 import { PDFCheckBox, PDFDocument, PDFString, PDFTextField, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
+import { sanitizeDocument } from "./sanitize";
+import { createSourceFontEmbedder, type SourceFontEmbedder } from "./fontEmbed";
 import { yieldToUI } from "./yield";
 import {
   DEFAULT_STYLE,
@@ -313,7 +315,10 @@ export async function exportPdf(
   const { edits, textBoxes, redactions, annotations, stamps, links = [], formValues = {}, pageNumbers, watermark } = input;
   const src = await PDFDocument.load(loaded.bytes.slice(0));
   fillAndFlattenForm(src, formValues);
-  const out = await PDFDocument.create();
+  // updateMetadata: false stops pdf-lib stamping its own Producer / Creator /
+  // CreationDate / ModDate into the new document; sanitizeDocument() then
+  // clears anything else before save (see below).
+  const out = await PDFDocument.create({ updateMetadata: false });
   const fontCache = new Map<string, PDFFont>();
 
   const getFont = async (key: keyof typeof StandardFonts): Promise<PDFFont> => {
@@ -327,6 +332,13 @@ export async function exportPdf(
 
   const helv = await getFont("Helvetica");
   const wmFont = watermark ? await getFont("HelveticaBold") : null;
+
+  // When any existing text is edited, spin up the source-font embedder so the
+  // edits can be redrawn in the document's own typeface. Lazily built (and only
+  // when there are edits) since it re-parses the file with PDF.js.
+  const anyEdits = loaded.pages.some((pd) => pd.fragments.some((f) => isFragmentModified(f, edits[f.id])));
+  let embedder: SourceFontEmbedder | null = null;
+  if (anyEdits) embedder = await createSourceFontEmbedder(loaded.bytes, out);
 
   let done = 0;
   for (const pageData of loaded.pages) {
@@ -373,27 +385,30 @@ export async function exportPdf(
       const y = fragment.transform[5];
       const descent = style.size * 0.22;
 
-      // Cover the original glyphs, then redraw.
+      // Prefer the document's own font when the user kept the original typeface
+      // (changed only text / size / colour) and it has a glyph for every
+      // character typed; otherwise fall back to a standard font.
+      const keptTypeface =
+        edit!.style.font === undefined && edit!.style.bold === undefined && edit!.style.italic === undefined;
+      let font: PDFFont | null = null;
+      if (keptTypeface && embedder) {
+        const src = await embedder.get(i, fragment.itemIndex);
+        if (src && src.covers(edit!.text)) font = src.font;
+      }
+      if (!font) font = await getFont(standardFontKey(style.font, style.bold, style.italic));
+
+      const text = sanitize(edit!.text, font);
+      const textWidth = font.widthOfTextAtSize(text, style.size);
+      // Cover the original glyphs (and the new text if it's longer), then redraw.
       page.drawRectangle({
         x: x - style.size * 0.05,
         y: y - descent,
-        width:
-          Math.max(fragment.width, edit!.text.length * style.size * 0.2) +
-          style.size * 0.1,
+        width: Math.max(fragment.width, textWidth) + style.size * 0.1,
         height: style.size * 1.2,
         color: rgb(1, 1, 1),
       });
-      const font = await getFont(
-        standardFontKey(style.font, style.bold, style.italic),
-      );
       const c = hexToRgb(style.color);
-      page.drawText(sanitize(edit!.text, font), {
-        x,
-        y,
-        size: style.size,
-        font,
-        color: rgb(c.r, c.g, c.b),
-      });
+      page.drawText(text, { x, y, size: style.size, font, color: rgb(c.r, c.g, c.b) });
     }
 
     for (const box of pageBoxes) {
@@ -432,6 +447,12 @@ export async function exportPdf(
     applyPageLayers(page);
   }
 
+  await embedder?.destroy();
+
+  // Privacy: strip metadata / timestamps / active content before handing the
+  // file back (the app never uploads, so the download is the only thing that
+  // leaves the device — it should carry nothing identifying).
+  sanitizeDocument(out);
   return out.save();
 }
 
