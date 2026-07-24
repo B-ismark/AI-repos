@@ -2,6 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import { CSS_FONT } from "../pdf/style";
 import { elementTap } from "../hooks/useDrag";
 import { placeCaretEnd } from "../caret";
+import { EditDoneButton } from "./EditDoneButton";
 import type { TextFragment, TextStyle } from "../pdf/types";
 
 interface Props {
@@ -25,6 +26,8 @@ interface Props {
   onSelect: (id: string) => void;
   /** Double-tap (touch) to enter edit mode on mobile. */
   onEdit?: (id: string) => void;
+  /** When set (mobile edit mode), a "done" checkmark is shown; commits the edit. */
+  onDone?: () => void;
   onChangeText: (id: string, text: string) => void;
 }
 
@@ -46,6 +49,7 @@ function EditableFragmentImpl({
   autoFocus,
   onSelect,
   onEdit,
+  onDone,
   onChangeText,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -133,6 +137,7 @@ function EditableFragmentImpl({
         onPointerDown={(e) =>
           interactive &&
           elementTap(e, {
+            id: fragment.id,
             onTap: () => onSelect(fragment.id),
             onDoubleTap: onEdit ? () => onEdit(fragment.id) : undefined,
           })
@@ -142,6 +147,12 @@ function EditableFragmentImpl({
           if (ev.key === "Enter") ev.preventDefault();
         }}
       />
+      {onDone && (
+        <EditDoneButton
+          style={{ left: `${cover.left + cover.width + 6}px`, top: `${top - 2}px` }}
+          onDone={onDone}
+        />
+      )}
     </>
   );
 }

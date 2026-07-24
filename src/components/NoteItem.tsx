@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import { elementTap } from "../hooks/useDrag";
 import { placeCaretEnd } from "../caret";
+import { EditDoneButton } from "./EditDoneButton";
 
 interface Props {
   id: string;
@@ -17,6 +18,8 @@ interface Props {
   onSelect: (id: string) => void;
   /** Double-tap (touch) to enter edit mode on mobile. */
   onEdit?: (id: string) => void;
+  /** When set (mobile edit mode), a "done" checkmark is shown; commits the edit. */
+  onDone?: () => void;
   onChangeText: (id: string, text: string) => void;
 }
 
@@ -52,6 +55,7 @@ function NoteItemImpl({
   autoFocus,
   onSelect,
   onEdit,
+  onDone,
   onChangeText,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -74,36 +78,45 @@ function NoteItemImpl({
   }, [autoFocus]);
 
   return (
-    <div
-      ref={ref}
-      className={`note${selected ? " note--sel" : ""}`}
-      data-el-id={id}
-      contentEditable={interactive && editing}
-      suppressContentEditableWarning
-      spellCheck={false}
-      data-placeholder="Note…"
-      role={interactive ? "textbox" : undefined}
-      aria-multiline="false"
-      aria-label="Sticky note"
-      style={{
-        left: `${x * scale}px`,
-        top: `${(pageHeight - y) * scale}px`,
-        background: color,
-        color: readableText(color),
-        pointerEvents: interactive ? "auto" : "none",
-      }}
-      onPointerDown={(e) =>
-        interactive &&
-        elementTap(e, {
-          onTap: () => onSelect(id),
-          onDoubleTap: onEdit ? () => onEdit(id) : undefined,
-        })
-      }
-      onInput={(e) => onChangeText(id, e.currentTarget.textContent ?? "")}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.preventDefault();
-      }}
-    />
+    <>
+      <div
+        ref={ref}
+        className={`note${selected ? " note--sel" : ""}`}
+        data-el-id={id}
+        contentEditable={interactive && editing}
+        suppressContentEditableWarning
+        spellCheck={false}
+        data-placeholder="Note…"
+        role={interactive ? "textbox" : undefined}
+        aria-multiline="false"
+        aria-label="Sticky note"
+        style={{
+          left: `${x * scale}px`,
+          top: `${(pageHeight - y) * scale}px`,
+          background: color,
+          color: readableText(color),
+          pointerEvents: interactive ? "auto" : "none",
+        }}
+        onPointerDown={(e) =>
+          interactive &&
+          elementTap(e, {
+            id,
+            onTap: () => onSelect(id),
+            onDoubleTap: onEdit ? () => onEdit(id) : undefined,
+          })
+        }
+        onInput={(e) => onChangeText(id, e.currentTarget.textContent ?? "")}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.preventDefault();
+        }}
+      />
+      {onDone && (
+        <EditDoneButton
+          style={{ left: `${x * scale}px`, top: `${(pageHeight - y) * scale - 34}px` }}
+          onDone={onDone}
+        />
+      )}
+    </>
   );
 }
 

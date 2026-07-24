@@ -898,7 +898,11 @@ body {
 .tb-wrap { position: absolute; }
 .textbox {
   display: inline-block;
-  white-space: nowrap;
+  /* Multi-line: honour the line breaks the user enters with Return, and don't
+     collapse them. Lines break only on explicit newlines (the box shrinks to
+     its content), so what you type is what you get. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   outline: none;
   cursor: text;
   transform-origin: left top;
@@ -929,6 +933,28 @@ body {
   text-align: center;
 }
 .tb-resize { left: 100%; top: 100%; }
+/* Text box "done" tick sits just past the top-right corner. */
+.tb-wrap .edit-done { left: 100%; top: -6px; margin-left: 4px; }
+
+/* ============ On-canvas "done editing" tick (mobile) ============ */
+.edit-done {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  line-height: 0;
+  border: 2px solid var(--surface-container-lowest);
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  touch-action: none;
+}
+.edit-done:active { background: color-mix(in srgb, var(--primary) 84%, black); }
 
 /* ============ Redactions ============ */
 .redaction { position: absolute; border-radius: 1px; touch-action: none; }

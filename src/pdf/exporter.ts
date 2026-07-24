@@ -5,6 +5,7 @@ import { createSourceFontEmbedder, type SourceFontEmbedder } from "./fontEmbed";
 import { yieldToUI } from "./yield";
 import {
   DEFAULT_STYLE,
+  TEXTBOX_LINE_HEIGHT,
   cssFont,
   hexToRgb,
   isFragmentModified,
@@ -417,12 +418,17 @@ export async function exportPdf(
         standardFontKey(box.style.font, box.style.bold, box.style.italic),
       );
       const c = hexToRgb(box.style.color);
-      page.drawText(sanitize(box.text, font), {
-        x: box.x,
-        y: box.y,
-        size: box.style.size,
-        font,
-        color: rgb(c.r, c.g, c.b),
+      // Multi-line: the first line's baseline is at box.y; each subsequent line
+      // steps down by the shared line height (matches the on-screen overlay).
+      const lineStep = box.style.size * TEXTBOX_LINE_HEIGHT;
+      box.text.split("\n").forEach((line, i) => {
+        page.drawText(sanitize(line, font), {
+          x: box.x,
+          y: box.y - i * lineStep,
+          size: box.style.size,
+          font,
+          color: rgb(c.r, c.g, c.b),
+        });
       });
     }
 
@@ -485,7 +491,13 @@ async function rasterisePage(
     ctx.font = cssFont(style, style.size * S);
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = style.color;
-    ctx.fillText(text, x * S, (H - yBaseline) * S);
+    // Multi-line (text boxes): step each line down by the shared line height.
+    // Single-line callers (edited fragments) have no "\n", so this is a no-op
+    // for them.
+    const lineStep = style.size * TEXTBOX_LINE_HEIGHT;
+    text.split("\n").forEach((line, i) => {
+      ctx.fillText(line, x * S, (H - (yBaseline - i * lineStep)) * S);
+    });
   };
 
   // Edited fragments: cover original glyphs in white, then redraw.

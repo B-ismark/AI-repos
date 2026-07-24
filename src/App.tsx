@@ -964,6 +964,16 @@ export function App() {
     setAutoFocusId(sel.id);
   }, []);
 
+  /** Commit and leave text-edit mode (the on-canvas "done" tick / back gesture):
+   * stop editing and blur the focused overlay so the keyboard retracts. The
+   * element stays selected so the selection bar remains available. */
+  const finishEdit = useCallback(() => {
+    setEditingId(null);
+    setAutoFocusId(null);
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  }, []);
+
   // Deselecting also exits edit mode and closes the on-demand sheet.
   useEffect(() => {
     if (!selection) {
@@ -971,6 +981,52 @@ export function App() {
       setSheetOpen(false);
     }
   }, [selection]);
+
+  // Android/iOS "back" while editing a document should peel back the current
+  // in-app layer (exit edit mode → close the sheet → deselect) instead of
+  // navigating away from the app (which would drop you on whatever page you
+  // arrived from). We keep a single sentinel history entry present whenever
+  // there's a layer to dismiss, and pop it to close one layer at a time.
+  // Phones only — desktop keeps the browser's normal Back semantics (and its
+  // text elements are always editable, so there's no "edit mode" to leave).
+  const backGuard = useRef(false);
+  const consumingGuard = useRef(false);
+  const dismissable = compact && (editingId != null || sheetOpen || selection != null);
+  useEffect(() => {
+    if (dismissable && !backGuard.current) {
+      backGuard.current = true;
+      try {
+        history.pushState({ pdfEditorLayer: true }, "");
+      } catch {
+        backGuard.current = false;
+      }
+    } else if (!dismissable && backGuard.current) {
+      // The layer was dismissed via the UI — remove our sentinel without
+      // leaving the app. The resulting popstate is swallowed below.
+      backGuard.current = false;
+      consumingGuard.current = true;
+      history.back();
+    }
+  }, [dismissable]);
+  useEffect(() => {
+    const onPopState = () => {
+      if (consumingGuard.current) {
+        consumingGuard.current = false;
+        return;
+      }
+      backGuard.current = false;
+      if (editingId != null) {
+        setEditingId(null);
+        setAutoFocusId(null);
+      } else if (sheetOpen) {
+        setSheetOpen(false);
+      } else if (selection != null) {
+        setSelection(null);
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [editingId, sheetOpen, selection]);
 
   // When the properties sheet opens on a phone, the fixed bottom sheet can
   // cover the selected object — so you can't see your style/colour edits land.
@@ -1822,6 +1878,7 @@ export function App() {
                 compact={compact}
                 onSelect={onSelect}
                 onEditText={enterEdit}
+                onFinishEdit={finishEdit}
                 onChangeFragmentText={onChangeFragmentText}
                 onChangeTextBoxText={onChangeTextBoxText}
                 onChangeTextBox={onChangeTextBox}

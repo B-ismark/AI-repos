@@ -40,14 +40,16 @@ export function startPointerDrag(
 }
 
 const TAP_SLOP = 10; // px of movement still counted as a tap, not a drag
-const DOUBLE_TAP_MS = 300; // max gap between the two taps of a double-tap
-const DOUBLE_TAP_SLOP = 30; // px the second tap may land from the first
+const DOUBLE_TAP_MS = 450; // max gap between the two taps of a double-tap
 
 // Last clean tap, shared across elements so a second tap can be recognised as
-// the partner of a double-tap. (Only one element is tapped at a time.)
+// the partner of a double-tap. (Only one element is tapped at a time.) The
+// pairing is keyed on the tapped element's id — not on pixel proximity — so a
+// double-tap is recognised anywhere on the same element (text targets are
+// often wider than a thumb), while a second tap that lands on a *different*
+// element is treated as a fresh single tap instead of editing the wrong one.
 let lastTapAt = 0;
-let lastTapX = 0;
-let lastTapY = 0;
+let lastTapId: string | null = null;
 
 /**
  * Cross-cutting flag: a text element sets `zoomUntil` (a timestamp) when it
@@ -99,7 +101,7 @@ export function tapSelect(e: React.PointerEvent, onTap: () => void): void {
  */
 export function elementTap(
   e: React.PointerEvent,
-  { onTap, onDoubleTap }: { onTap: () => void; onDoubleTap?: () => void },
+  { id, onTap, onDoubleTap }: { id: string; onTap: () => void; onDoubleTap?: () => void },
 ): void {
   if (e.pointerType !== "touch") {
     onTap();
@@ -108,10 +110,7 @@ export function elementTap(
   const sx = e.clientX;
   const sy = e.clientY;
   const t0 = performance.now();
-  const isDouble =
-    !!onDoubleTap &&
-    t0 - lastTapAt < DOUBLE_TAP_MS &&
-    Math.hypot(sx - lastTapX, sy - lastTapY) < DOUBLE_TAP_SLOP;
+  const isDouble = !!onDoubleTap && id === lastTapId && t0 - lastTapAt < DOUBLE_TAP_MS;
   // Claim the gesture from the viewport's double-tap zoom now, on pointer-down.
   if (isDouble) tapSuppress.zoomUntil = t0 + 400;
   let moved = false;
@@ -124,15 +123,16 @@ export function elementTap(
     window.removeEventListener("pointercancel", up);
     if (moved || performance.now() - t0 >= 700) {
       lastTapAt = 0;
+      lastTapId = null;
       return;
     }
     if (isDouble) {
       lastTapAt = 0;
+      lastTapId = null;
       onDoubleTap!();
     } else {
       lastTapAt = performance.now();
-      lastTapX = sx;
-      lastTapY = sy;
+      lastTapId = id;
       onTap();
     }
   };

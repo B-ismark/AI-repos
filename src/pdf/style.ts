@@ -16,6 +16,11 @@ export const DEFAULT_STYLE: TextStyle = {
   color: "#000000",
 };
 
+/** Line advance (as a multiple of font size) for multi-line text boxes. The
+ * on-screen overlay and the exporter share this so wrapped/broken lines land
+ * in the same place on screen and in the downloaded file. */
+export const TEXTBOX_LINE_HEIGHT = 1.2;
+
 /** Map an abstract font + weight/style to a pdf-lib standard font. */
 export function standardFontKey(
   font: FontKey,
