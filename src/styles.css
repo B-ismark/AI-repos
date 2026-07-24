@@ -1413,6 +1413,24 @@ body {
 .compress__preset-hint { color: var(--on-surface-variant); }
 .compress__preset--on .compress__preset-hint { color: var(--on-secondary-container); }
 .compress__preset:disabled { opacity: 0.6; cursor: default; }
+/* Custom resolution / quality sliders. */
+.compress__sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+}
+.compress__slider { display: flex; flex-direction: column; gap: 6px; }
+.compress__slider-head { display: flex; justify-content: space-between; color: var(--on-surface-variant); }
+.compress__slider-head span:last-child { color: var(--on-surface); font-variant-numeric: tabular-nums; }
+.compress__slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
 /* Live size-preview line. */
 .compress__estimate {
   display: flex;

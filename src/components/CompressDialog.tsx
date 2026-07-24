@@ -34,25 +34,31 @@ const CHOICES: Choice[] = [
 ];
 
 const fmt = (n: number) => (n < 1_000_000 ? Math.round(n / 1000) + " KB" : (n / 1_000_000).toFixed(2) + " MB");
+const dpiOf = (scale: number) => Math.round(scale * 72); // 1 PDF point = 1/72 inch
 
 /** Pick a compression strategy and preview the resulting size before
  * downloading. Rasterising presets flatten pages to images (smaller, but text
- * is no longer selectable); "Keep text" losslessly re-optimises the document. */
+ * is no longer selectable); "Keep text" losslessly re-optimises the document;
+ * "Custom" exposes the raster resolution + JPEG quality directly. */
 export function CompressDialog({ onEstimate, onDownload, onClose }: Props) {
   const [sel, setSel] = useState("balanced");
   const [busy, setBusy] = useState(false);
   const [est, setEst] = useState<CompressEstimate | null>(null);
   const [errored, setErrored] = useState(false);
+  const [scale, setScale] = useState(1.5);
+  const [quality, setQuality] = useState(0.7);
   const modalRef = useModal<HTMLDivElement>(onClose);
 
-  const pick = async (key: string) => {
+  const presetFor = (key: string): CompressPreset =>
+    key === "custom" ? { kind: "raster", opts: { scale, quality } } : CHOICES.find((c) => c.key === key)!.preset;
+
+  const estimate = async (key: string, preset: CompressPreset) => {
     setSel(key);
     setEst(null);
     setErrored(false);
     setBusy(true);
     try {
-      const result = await onEstimate(CHOICES.find((c) => c.key === key)!.preset);
-      setEst(result);
+      setEst(await onEstimate(preset));
     } catch {
       setErrored(true);
     } finally {
@@ -60,9 +66,13 @@ export function CompressDialog({ onEstimate, onDownload, onClose }: Props) {
     }
   };
 
+  const pick = (key: string) => void estimate(key, presetFor(key));
+  // Re-estimate the custom result after a slider is released (not on every tick).
+  const reestimateCustom = () => void estimate("custom", { kind: "raster", opts: { scale, quality } });
+
   // Preview the default choice as soon as the dialog opens.
   useEffect(() => {
-    void pick("balanced");
+    void estimate("balanced", CHOICES.find((c) => c.key === "balanced")!.preset);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -91,7 +101,7 @@ export function CompressDialog({ onEstimate, onDownload, onClose }: Props) {
             <button
               key={c.key}
               className={`compress__preset${sel === c.key ? " compress__preset--on" : ""}`}
-              onClick={() => void pick(c.key)}
+              onClick={() => pick(c.key)}
               aria-pressed={sel === c.key}
               disabled={busy}
             >
@@ -99,7 +109,57 @@ export function CompressDialog({ onEstimate, onDownload, onClose }: Props) {
               <span className="compress__preset-hint body-small">{c.hint}</span>
             </button>
           ))}
+          <button
+            className={`compress__preset${sel === "custom" ? " compress__preset--on" : ""}`}
+            onClick={() => pick("custom")}
+            aria-pressed={sel === "custom"}
+            disabled={busy}
+          >
+            <span className="compress__preset-label">Custom</span>
+            <span className="compress__preset-hint body-small">Set resolution &amp; quality</span>
+          </button>
         </div>
+
+        {sel === "custom" && (
+          <div className="compress__sliders">
+            <label className="compress__slider">
+              <span className="compress__slider-head body-small">
+                <span>Resolution</span>
+                <span>{dpiOf(scale)} dpi</span>
+              </span>
+              <input
+                type="range"
+                min={0.75}
+                max={2.5}
+                step={0.25}
+                value={scale}
+                disabled={busy}
+                onChange={(e) => setScale(Number(e.target.value))}
+                onPointerUp={reestimateCustom}
+                onKeyUp={reestimateCustom}
+                aria-label="Resolution in dpi"
+              />
+            </label>
+            <label className="compress__slider">
+              <span className="compress__slider-head body-small">
+                <span>Quality</span>
+                <span>{Math.round(quality * 100)}%</span>
+              </span>
+              <input
+                type="range"
+                min={0.3}
+                max={0.95}
+                step={0.05}
+                value={quality}
+                disabled={busy}
+                onChange={(e) => setQuality(Number(e.target.value))}
+                onPointerUp={reestimateCustom}
+                onKeyUp={reestimateCustom}
+                aria-label="JPEG quality percent"
+              />
+            </label>
+          </div>
+        )}
 
         {/* Live size preview for the selected choice. */}
         <div className="compress__estimate body-medium" aria-live="polite">
