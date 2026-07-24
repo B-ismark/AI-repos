@@ -1,8 +1,9 @@
 import { memo, useEffect, useRef } from "react";
-import { CSS_FONT } from "../pdf/style";
+import { CSS_FONT, TEXTBOX_LINE_HEIGHT } from "../pdf/style";
 import { elementTap, startPointerDrag } from "../hooks/useDrag";
 import { clearGuides, setGuides, snapBox } from "../hooks/useSnap";
 import { placeCaretEnd } from "../caret";
+import { EditDoneButton } from "./EditDoneButton";
 import type { TextBox } from "../pdf/types";
 
 interface Props {
@@ -18,6 +19,8 @@ interface Props {
   onSelect: (id: string) => void;
   /** Double-tap (touch) to enter edit mode on mobile. */
   onEdit?: (id: string) => void;
+  /** When set (mobile edit mode), a "done" checkmark is shown; commits the edit. */
+  onDone?: () => void;
   onChangeText: (id: string, text: string) => void;
   onChange: (id: string, patch: Partial<TextBox>, key: string) => void;
 }
@@ -37,6 +40,7 @@ function TextBoxItemImpl({
   autoFocus,
   onSelect,
   onEdit,
+  onDone,
   onChangeText,
   onChange,
 }: Props) {
@@ -46,11 +50,13 @@ function TextBoxItemImpl({
 
   // Re-seed the uncontrolled contentEditable from state only when it actually
   // differs — a no-op while typing (no caret jump), a re-seed on undo/redo or
-  // any other external change. See EditableFragment for the rationale.
+  // any other external change. See EditableFragment for the rationale. Text
+  // boxes are multi-line, so we round-trip through `innerText` (which maps
+  // rendered line breaks to "\n" and back) rather than `textContent`.
   useEffect(() => {
     const el = ref.current;
-    if (!el || el.textContent === box.text) return;
-    el.textContent = box.text;
+    if (!el || el.innerText === box.text) return;
+    el.innerText = box.text;
     if (document.activeElement === el) placeCaretEnd(el);
   }, [box.text]);
 
@@ -119,7 +125,7 @@ function TextBoxItemImpl({
         spellCheck={false}
         data-placeholder="Type…"
         role={interactive ? "textbox" : undefined}
-        aria-multiline="false"
+        aria-multiline="true"
         aria-label="Text box"
         style={{
           fontSize: `${fontPx}px`,
@@ -127,21 +133,23 @@ function TextBoxItemImpl({
           fontWeight: box.style.bold ? "bold" : "normal",
           fontStyle: box.style.italic ? "italic" : "normal",
           color: box.style.color,
-          lineHeight: 1,
+          lineHeight: TEXTBOX_LINE_HEIGHT,
           pointerEvents: interactive ? "auto" : "none",
         }}
         onPointerDown={(e) =>
           interactive &&
           elementTap(e, {
+            id: box.id,
             onTap: () => onSelect(box.id),
             onDoubleTap: onEdit ? () => onEdit(box.id) : undefined,
           })
         }
-        onInput={(ev) => onChangeText(box.id, ev.currentTarget.textContent ?? "")}
-        onKeyDown={(ev) => {
-          if (ev.key === "Enter") ev.preventDefault();
-        }}
+        // Multi-line: `innerText` preserves the line breaks that Enter inserts
+        // (`textContent` would flatten them). Enter falls through to the
+        // browser's default line break.
+        onInput={(ev) => onChangeText(box.id, ev.currentTarget.innerText)}
       />
+      {onDone && <EditDoneButton onDone={onDone} />}
       {selected && interactive && (
         <>
           <div

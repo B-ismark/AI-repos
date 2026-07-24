@@ -62,6 +62,8 @@ interface Props {
   onSelect: (selection: Selection) => void;
   /** Enter text-edit mode for a text element (double-tap on touch). */
   onEditText: (selection: NonNullable<Selection>) => void;
+  /** Commit and exit the current mobile text-edit (the on-canvas "done" tick). */
+  onFinishEdit: () => void;
   onChangeFragmentText: (id: string, text: string) => void;
   onChangeTextBoxText: (id: string, text: string) => void;
   onChangeTextBox: (id: string, patch: Partial<TextBox>, key: string) => void;
@@ -95,7 +97,7 @@ interface Gesture {
 export function PageView(props: Props) {
   const {
     bytes, page, scale, tool, drawTool, drawStyle, edits, textBoxes, redactions,
-    annotations, stamps, links, formValues, pageNumbers, watermark, multiIds, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, onSelect, onEditText,
+    annotations, stamps, links, formValues, pageNumbers, watermark, multiIds, placing, findMatches, activeFindId, selection, autoFocusId, editingId, compact, onSelect, onEditText, onFinishEdit,
     onChangeFragmentText, onChangeTextBoxText, onChangeTextBox, onChangeRedaction, onChangeLink,
     onChangeNoteText, onMoveAnnotation, onChangeStamp, onDeleteStamp, onAddTextBox, onAddRedaction, onAddLink, onChangeFormValue, onMarquee, onAddAnnotation,
     onPlaceStamp,
@@ -346,6 +348,7 @@ export function PageView(props: Props) {
                 autoFocus={autoFocusId === fragment.id}
                 onSelect={(id) => onSelect({ kind: "fragment", id })}
                 onEdit={(id) => onEditText({ kind: "fragment", id })}
+                onDone={compact && editingId === fragment.id ? onFinishEdit : undefined}
                 onChangeText={onChangeFragmentText}
               />
             );
@@ -367,6 +370,7 @@ export function PageView(props: Props) {
               autoFocus={autoFocusId === n.id}
               onSelect={(id) => onSelect({ kind: "annotation", id })}
               onEdit={(id) => onEditText({ kind: "annotation", id })}
+              onDone={compact && editingId === n.id ? onFinishEdit : undefined}
               onChangeText={onChangeNoteText}
             />
           ))}
@@ -384,6 +388,7 @@ export function PageView(props: Props) {
               autoFocus={autoFocusId === box.id}
               onSelect={(id) => onSelect({ kind: "textbox", id })}
               onEdit={(id) => onEditText({ kind: "textbox", id })}
+              onDone={compact && editingId === box.id ? onFinishEdit : undefined}
               onChangeText={onChangeTextBoxText}
               onChange={onChangeTextBox}
             />
