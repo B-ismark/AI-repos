@@ -1,5 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
+import { sanitizeDocument } from "./sanitize";
 import { yieldToUI } from "./yield";
 
 // Page numbering and watermark are no longer separate document-rebuild passes;
@@ -25,7 +26,7 @@ export async function compressPdf(
   opts: CompressOptions,
   onProgress?: (page: number, total: number) => void,
 ): Promise<Uint8Array> {
-  const out = await PDFDocument.create();
+  const out = await PDFDocument.create({ updateMetadata: false });
   for (let i = 0; i < pageSizes.length; i++) {
     onProgress?.(i + 1, pageSizes.length);
     await yieldToUI();
@@ -36,6 +37,7 @@ export async function compressPdf(
     const page = out.addPage([width, height]);
     page.drawImage(img, { x: 0, y: 0, width, height });
   }
+  sanitizeDocument(out);
   return out.save();
 }
 

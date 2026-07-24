@@ -12,6 +12,7 @@ import { CommandPalette, type Command } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
 import { findMatches, extractText, type FindMatch } from "./pdf/find";
 import { boxCX, boxCY } from "./pdf/bbox";
+import { findUnsafeCovers, type CoverWarning } from "./pdf/redactionSafety";
 import { useAutosave } from "./hooks/useAutosave";
 import type { PageNumberOptions, WatermarkOptions } from "./pdf/types";
 import { useHistory } from "./hooks/useHistory";
@@ -210,6 +211,7 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [organizeOpen, setOrganizeOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [coverWarn, setCoverWarn] = useState<CoverWarning | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findActive, setFindActive] = useState(0);
@@ -1434,7 +1436,7 @@ export function App() {
     deleteMulti,
   ]);
 
-  const download = useCallback(async () => {
+  const runExport = useCallback(async () => {
     if (!pdf) return;
     setStatus("exporting");
     setMessage("Building edited PDF…");
@@ -1463,6 +1465,20 @@ export function App() {
       setMessage("Couldn't build the edited PDF. Please try again.");
     }
   }, [pdf, edits, textBoxes, redactions, annotations, stamps, links, formValues, pageNumbers, watermark, fileName]);
+
+  // Guard the download: a whiteout cover only paints over content — the text
+  // beneath stays recoverable. If any cover sits over live text, warn before
+  // handing back a file that looks redacted but isn't. True redactions
+  // rasterise the page and are safe, so they never trip this.
+  const download = useCallback(async () => {
+    if (!pdf) return;
+    const warn = findUnsafeCovers(pdf, redactions);
+    if (warn.count > 0) {
+      setCoverWarn(warn);
+      return;
+    }
+    await runExport();
+  }, [pdf, redactions, runExport]);
 
   // Open the OS file picker to load a different document in place of the
   // current one (loading a new file replaces the working doc + autosave).
@@ -1990,6 +2006,21 @@ export function App() {
           danger
           onConfirm={openAnother}
           onCancel={() => setConfirmReset(false)}
+        />
+      )}
+
+      {coverWarn && (
+        <ConfirmDialog
+          title="Whiteout doesn't remove the text"
+          message={`${coverWarn.count} whiteout cover${coverWarn.count > 1 ? "s" : ""} (page ${coverWarn.pages.join(", ")}) sit over live text that stays readable — by copy/paste or search — in the downloaded file. For content that must be permanently removed, use the Redact tool instead. Download anyway?`}
+          confirmLabel="Download anyway"
+          cancelLabel="Go back"
+          danger
+          onConfirm={() => {
+            setCoverWarn(null);
+            void runExport();
+          }}
+          onCancel={() => setCoverWarn(null)}
         />
       )}
 

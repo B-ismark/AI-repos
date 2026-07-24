@@ -1,5 +1,6 @@
 import { PDFCheckBox, PDFDocument, PDFString, PDFTextField, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
+import { sanitizeDocument } from "./sanitize";
 import { yieldToUI } from "./yield";
 import {
   DEFAULT_STYLE,
@@ -313,7 +314,10 @@ export async function exportPdf(
   const { edits, textBoxes, redactions, annotations, stamps, links = [], formValues = {}, pageNumbers, watermark } = input;
   const src = await PDFDocument.load(loaded.bytes.slice(0));
   fillAndFlattenForm(src, formValues);
-  const out = await PDFDocument.create();
+  // updateMetadata: false stops pdf-lib stamping its own Producer / Creator /
+  // CreationDate / ModDate into the new document; sanitizeDocument() then
+  // clears anything else before save (see below).
+  const out = await PDFDocument.create({ updateMetadata: false });
   const fontCache = new Map<string, PDFFont>();
 
   const getFont = async (key: keyof typeof StandardFonts): Promise<PDFFont> => {
@@ -432,6 +436,10 @@ export async function exportPdf(
     applyPageLayers(page);
   }
 
+  // Privacy: strip metadata / timestamps / active content before handing the
+  // file back (the app never uploads, so the download is the only thing that
+  // leaves the device — it should carry nothing identifying).
+  sanitizeDocument(out);
   return out.save();
 }
 
