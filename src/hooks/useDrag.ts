@@ -62,6 +62,14 @@ let lastTapId: string | null = null;
 export const tapSuppress = { zoomUntil: 0 };
 
 /**
+ * Screen coordinates of the last double-tap that entered text-edit mode. The
+ * editable overlay reads this on focus to drop the caret where the finger
+ * landed (like tapping into a native input) instead of jumping to the end.
+ * `at` is a timestamp so a stale point from an earlier edit is ignored.
+ */
+export const lastEditPoint = { x: 0, y: 0, at: 0 };
+
+/**
  * Touch-friendly tap detection. Fires `onTap` only if the pointer barely
  * moved, and never stops propagation or sets the drag lock — so a pan gesture
  * that happens to start on an element passes through to the viewport instead
@@ -129,6 +137,9 @@ export function elementTap(
     if (isDouble) {
       lastTapAt = 0;
       lastTapId = null;
+      lastEditPoint.x = sx;
+      lastEditPoint.y = sy;
+      lastEditPoint.at = performance.now();
       onDoubleTap!();
     } else {
       lastTapAt = performance.now();

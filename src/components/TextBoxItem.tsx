@@ -1,8 +1,8 @@
 import { memo, useEffect, useRef } from "react";
 import { CSS_FONT, TEXTBOX_LINE_HEIGHT } from "../pdf/style";
-import { elementTap, startPointerDrag } from "../hooks/useDrag";
+import { elementTap, lastEditPoint, startPointerDrag } from "../hooks/useDrag";
 import { clearGuides, setGuides, snapBox } from "../hooks/useSnap";
-import { placeCaretEnd } from "../caret";
+import { focusEditable, placeCaretEnd } from "../caret";
 import { EditDoneButton } from "./EditDoneButton";
 import type { TextBox } from "../pdf/types";
 
@@ -60,14 +60,12 @@ function TextBoxItemImpl({
     if (document.activeElement === el) placeCaretEnd(el);
   }, [box.text]);
 
-  // Enter edit (mobile "Edit", or a freshly added box): focus, caret to end,
-  // and scroll into view above the keyboard.
+  // Enter edit (mobile "Edit", double-tap, or a freshly added box): focus,
+  // drop the caret where the entering tap landed (or at the end), and scroll
+  // into view above the keyboard.
   useEffect(() => {
     if (!autoFocus || !ref.current) return;
-    const el = ref.current;
-    el.focus();
-    placeCaretEnd(el);
-    el.scrollIntoView({ block: "center", inline: "nearest" });
+    focusEditable(ref.current, lastEditPoint);
   }, [autoFocus]);
 
   const fontPx = box.style.size * scale;
@@ -112,14 +110,15 @@ function TextBoxItemImpl({
   };
 
   return (
-    <div
-      className={`tb-wrap${selected ? " tb-wrap--selected" : ""}`}
-      data-el-id={box.id}
-      style={{ left: `${left}px`, top: `${top}px` }}
-    >
+    <>
       <div
-        ref={ref}
-        className="textbox"
+        className={`tb-wrap${selected ? " tb-wrap--selected" : ""}`}
+        data-el-id={box.id}
+        style={{ left: `${left}px`, top: `${top}px` }}
+      >
+        <div
+          ref={ref}
+          className="textbox"
         contentEditable={interactive && editing}
         suppressContentEditableWarning
         spellCheck={false}
@@ -136,37 +135,43 @@ function TextBoxItemImpl({
           lineHeight: TEXTBOX_LINE_HEIGHT,
           pointerEvents: interactive ? "auto" : "none",
         }}
-        onPointerDown={(e) =>
-          interactive &&
+        onPointerDown={(e) => {
+          if (!interactive) return;
+          // Active mobile edit target: let the browser handle taps natively
+          // (caret placement / word selection). See EditableFragment.
+          if (onDone && e.pointerType === "touch") return;
           elementTap(e, {
             id: box.id,
             onTap: () => onSelect(box.id),
             onDoubleTap: onEdit ? () => onEdit(box.id) : undefined,
-          })
-        }
+          });
+        }}
         // Multi-line: `innerText` preserves the line breaks that Enter inserts
         // (`textContent` would flatten them). Enter falls through to the
         // browser's default line break.
         onInput={(ev) => onChangeText(box.id, ev.currentTarget.innerText)}
-      />
-      {onDone && <EditDoneButton onDone={onDone} />}
-      {selected && interactive && (
-        <>
-          <div
-            className="tb-move"
-            data-tip="Drag to move"
-            aria-label="Drag to move text box"
-            onPointerDown={beginMove}
-          />
-          <div
-            className="handle tb-resize"
-            data-tip="Drag to resize"
-            aria-label="Drag to resize text box"
-            onPointerDown={beginResize}
-          />
-        </>
-      )}
-    </div>
+        />
+        {selected && interactive && (
+          <>
+            <div
+              className="tb-move"
+              data-tip="Drag to move"
+              aria-label="Drag to move text box"
+              onPointerDown={beginMove}
+            />
+            <div
+              className="handle tb-resize"
+              data-tip="Drag to resize"
+              aria-label="Drag to resize text box"
+              onPointerDown={beginResize}
+            />
+          </>
+        )}
+      </div>
+      {/* The done tick lives outside .tb-wrap so it positions against the page
+          overlay (like the other overlay chrome), not the text box. */}
+      {onDone && <EditDoneButton editableRef={ref} onDone={onDone} />}
+    </>
   );
 }
 

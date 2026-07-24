@@ -235,6 +235,10 @@ export function useViewport() {
             // A text element claimed this double-tap to enter edit mode — don't
             // also zoom the page.
             if (performance.now() < tapSuppress.zoomUntil) return;
+            // While a text overlay is being edited, let the browser handle the
+            // double-tap (select the word) instead of zooming the page.
+            const active = document.activeElement;
+            if (active instanceof HTMLElement && active.isContentEditable) return;
             zoomBy(zoom > 1.2 ? 1 / zoom : 2, x, y);
           } else {
             lastTap.current = { t: performance.now(), x, y };

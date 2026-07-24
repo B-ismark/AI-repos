@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import { CSS_FONT } from "../pdf/style";
-import { elementTap } from "../hooks/useDrag";
-import { placeCaretEnd } from "../caret";
+import { elementTap, lastEditPoint } from "../hooks/useDrag";
+import { focusEditable, placeCaretEnd } from "../caret";
 import { EditDoneButton } from "./EditDoneButton";
 import type { TextFragment, TextStyle } from "../pdf/types";
 
@@ -67,14 +67,11 @@ function EditableFragmentImpl({
     if (document.activeElement === el) placeCaretEnd(el);
   }, [value]);
 
-  // Enter edit: focus, put the caret at the end, and scroll into view above
-  // the keyboard.
+  // Enter edit: focus and drop the caret where the entering tap landed (or at
+  // the end), then scroll into view above the keyboard.
   useEffect(() => {
     if (!autoFocus || !ref.current) return;
-    const el = ref.current;
-    el.focus();
-    placeCaretEnd(el);
-    el.scrollIntoView({ block: "center", inline: "nearest" });
+    focusEditable(ref.current, lastEditPoint);
   }, [autoFocus]);
 
   const [, , c, d, e, f] = fragment.transform;
@@ -134,25 +131,25 @@ function EditableFragmentImpl({
           lineHeight: 1,
           pointerEvents: interactive ? "auto" : "none",
         }}
-        onPointerDown={(e) =>
-          interactive &&
+        onPointerDown={(e) => {
+          if (!interactive) return;
+          // While this element is the active mobile edit target, let the
+          // browser handle the touch natively — tap positions the caret,
+          // double-tap selects a word — instead of our select/enter-edit tap
+          // logic. (`onDone` is only set for that element on a phone.)
+          if (onDone && e.pointerType === "touch") return;
           elementTap(e, {
             id: fragment.id,
             onTap: () => onSelect(fragment.id),
             onDoubleTap: onEdit ? () => onEdit(fragment.id) : undefined,
-          })
-        }
+          });
+        }}
         onInput={(ev) => onChangeText(fragment.id, ev.currentTarget.textContent ?? "")}
         onKeyDown={(ev) => {
           if (ev.key === "Enter") ev.preventDefault();
         }}
       />
-      {onDone && (
-        <EditDoneButton
-          style={{ left: `${cover.left + cover.width + 6}px`, top: `${top - 2}px` }}
-          onDone={onDone}
-        />
-      )}
+      {onDone && <EditDoneButton editableRef={ref} onDone={onDone} />}
     </>
   );
 }
