@@ -27,7 +27,7 @@ interface Choice {
 }
 
 const CHOICES: Choice[] = [
-  { key: "lossless", label: "Keep text", hint: "Lossless · stays selectable & searchable", preset: { kind: "lossless" } },
+  { key: "lossless", label: "Keep text", hint: "Stays selectable · shrinks large images", preset: { kind: "lossless" } },
   { key: "high", label: "High quality", hint: "≈150 dpi · crisp images", preset: { kind: "raster", opts: { scale: 2, quality: 0.82 } } },
   { key: "balanced", label: "Balanced", hint: "≈110 dpi · good for sharing", preset: { kind: "raster", opts: { scale: 1.5, quality: 0.7 } } },
   { key: "small", label: "Smallest", hint: "≈72 dpi · email-friendly", preset: { kind: "raster", opts: { scale: 1, quality: 0.6 } } },
@@ -182,7 +182,7 @@ export function CompressDialog({ onEstimate, onDownload, onClose }: Props) {
 
         <p className="confirm__msg body-small">
           {isLossless
-            ? "Keeps every page selectable and searchable — just re-optimised and stripped of hidden metadata."
+            ? "Keeps every page selectable and searchable, re-optimised and stripped of hidden metadata; oversized photos/scans are downsampled."
             : "Rasterising flattens each page to an image, so the exported copy won't be text-editable."}{" "}
           Your working document is untouched.
         </p>

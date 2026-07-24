@@ -514,11 +514,15 @@ export function App() {
   // preset, so they're cached across estimates for the life of the dialog.
   const compressBaked = useRef<{ buf: ArrayBuffer; sizes: { width: number; height: number }[]; before: number } | null>(null);
   const compressOut = useRef<{ bytes: Uint8Array; lossless: boolean; helped: boolean; before: number; after: number } | null>(null);
+  // Cached text-preserving (image-optimised) result — computing it decodes and
+  // re-encodes images, so don't redo it each time "Keep text" is re-selected.
+  const compressLossless = useRef<{ bytes: Uint8Array; size: number } | null>(null);
 
   const openCompress = useCallback(() => {
     setSelection(null);
     compressBaked.current = null;
     compressOut.current = null;
+    compressLossless.current = null;
     setCompressOpen(true);
   }, []);
 
@@ -535,8 +539,17 @@ export function App() {
       }
       const { buf, sizes, before } = compressBaked.current;
       if (preset.kind === "lossless") {
-        compressOut.current = { bytes: new Uint8Array(buf), lossless: true, helped: false, before, after: before };
-        return { kind: "lossless", size: before };
+        // Text stays selectable; oversized JPEG images are downsampled in place.
+        if (!compressLossless.current) {
+          const { optimizeKeepingText } = await import("./pdf/finishOps");
+          const { bytes: optimized } = await optimizeKeepingText(buf, { maxDim: 1600, quality: 0.8 });
+          // Never hand back something larger than the plain baked version.
+          const best = optimized.byteLength < before ? optimized : new Uint8Array(buf);
+          compressLossless.current = { bytes: best, size: best.byteLength };
+        }
+        const { bytes, size } = compressLossless.current;
+        compressOut.current = { bytes, lossless: true, helped: size < before, before, after: size };
+        return { kind: "lossless", size };
       }
       const { compressPdf } = await import("./pdf/finishOps");
       const compressed = await compressPdf(buf, sizes, preset.opts);
@@ -568,6 +581,7 @@ export function App() {
     );
     compressBaked.current = null;
     compressOut.current = null;
+    compressLossless.current = null;
   }, [fileName, downloadBytes]);
 
   const runOcr = useCallback(async () => {

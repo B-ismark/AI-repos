@@ -2,6 +2,7 @@ import { PDFDocument } from "pdf-lib";
 import { renderPageToCanvas } from "./loader";
 import { sanitizeDocument } from "./sanitize";
 import { loadJpegEncoder } from "./jpeg";
+import { optimizeImages } from "./optimizeImages";
 import { yieldToUI } from "./yield";
 
 // Page numbering and watermark are no longer separate document-rebuild passes;
@@ -42,6 +43,22 @@ export async function compressPdf(
   }
   sanitizeDocument(out);
   return out.save();
+}
+
+/**
+ * Text-preserving optimisation: downsample + re-encode oversized JPEG images in
+ * place while keeping all vector/text content selectable. Operates on an
+ * already-baked (sanitised, object-streamed) document. Returns the optimised
+ * bytes and how many images were replaced.
+ */
+export async function optimizeKeepingText(
+  bytes: ArrayBuffer,
+  opts: { maxDim: number; quality: number },
+): Promise<{ bytes: Uint8Array; changed: number }> {
+  const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+  const { changed } = await optimizeImages(doc, opts);
+  const out = await doc.save();
+  return { bytes: out, changed };
 }
 
 /** Render each page to a PNG data URL for image export. */
