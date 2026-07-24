@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from "react";
-import { elementTap } from "../hooks/useDrag";
-import { placeCaretEnd } from "../caret";
+import { elementTap, lastEditPoint } from "../hooks/useDrag";
+import { focusEditable, placeCaretEnd } from "../caret";
 import { EditDoneButton } from "./EditDoneButton";
 
 interface Props {
@@ -71,10 +71,7 @@ function NoteItemImpl({
 
   useEffect(() => {
     if (!autoFocus || !ref.current) return;
-    const el = ref.current;
-    el.focus();
-    placeCaretEnd(el);
-    el.scrollIntoView({ block: "center", inline: "nearest" });
+    focusEditable(ref.current, lastEditPoint);
   }, [autoFocus]);
 
   return (
@@ -97,25 +94,23 @@ function NoteItemImpl({
           color: readableText(color),
           pointerEvents: interactive ? "auto" : "none",
         }}
-        onPointerDown={(e) =>
-          interactive &&
+        onPointerDown={(e) => {
+          if (!interactive) return;
+          // Active mobile edit target: let the browser handle taps natively
+          // (caret placement / word selection). See EditableFragment.
+          if (onDone && e.pointerType === "touch") return;
           elementTap(e, {
             id,
             onTap: () => onSelect(id),
             onDoubleTap: onEdit ? () => onEdit(id) : undefined,
-          })
-        }
+          });
+        }}
         onInput={(e) => onChangeText(id, e.currentTarget.textContent ?? "")}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.preventDefault();
         }}
       />
-      {onDone && (
-        <EditDoneButton
-          style={{ left: `${x * scale}px`, top: `${(pageHeight - y) * scale - 34}px` }}
-          onDone={onDone}
-        />
-      )}
+      {onDone && <EditDoneButton editableRef={ref} onDone={onDone} />}
     </>
   );
 }
