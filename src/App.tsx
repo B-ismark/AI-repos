@@ -508,48 +508,57 @@ export function App() {
     setMessage("Watermark removed.");
   }, [doc]);
 
-  const applyCompress = useCallback(
-    async (opts: import("./pdf/finishOps").CompressOptions) => {
-      if (!pdf) return;
-      setCompressOpen(false);
-      setStatus("working");
-      setMessage("Compressing…");
-      try {
+  // Compression is a two-step flow so the user can see the resulting size
+  // before committing: estimate (bake once, then compress at the chosen preset)
+  // then download the previewed bytes. The baked bytes don't depend on the
+  // preset, so they're cached across estimates for the life of the dialog.
+  const compressBaked = useRef<{ buf: ArrayBuffer; sizes: { width: number; height: number }[]; before: number } | null>(null);
+  const compressOut = useRef<{ bytes: Uint8Array; helped: boolean; before: number; after: number } | null>(null);
+
+  const openCompress = useCallback(() => {
+    setSelection(null);
+    compressBaked.current = null;
+    compressOut.current = null;
+    setCompressOpen(true);
+  }, []);
+
+  const estimateCompress = useCallback(
+    async (opts: import("./pdf/finishOps").CompressOptions): Promise<{ before: number; after: number; helped: boolean }> => {
+      if (!pdf) throw new Error("No document");
+      if (!compressBaked.current) {
         const baked = await bakeCurrent();
-        const { compressPdf } = await import("./pdf/finishOps");
         const sizes = pdf.pages.map((p) => ({ width: p.viewBox.width, height: p.viewBox.height }));
-        const compressed = await compressPdf(baked, sizes, opts, (p, t) =>
-          setMessage(`Compressing… page ${p}/${t}`),
-        );
-        const before = baked.byteLength;
-        const after = compressed.byteLength;
-        // Rasterising a text/vector PDF can produce a *larger* file than the
-        // original. Keep whichever is smaller so "compress" never hands back a
-        // bigger download, and be honest about which one we kept.
-        const helped = after < before;
-        const base = fileName.replace(/\.pdf$/i, "");
-        downloadBytes(
-          helped ? compressed : new Uint8Array(baked),
-          base + (helped ? "-compressed.pdf" : ".pdf"),
-        );
-        setStatus("ready");
-        const fmt = (n: number) =>
-          n < 1_000_000 ? Math.round(n / 1000) + " KB" : (n / 1_000_000).toFixed(2) + " MB";
-        if (helped) {
-          const pct = Math.round((1 - after / before) * 100);
-          setMessage(`Compressed — ${fmt(before)} → ${fmt(after)} (${pct}% smaller).`);
-        } else {
-          setMessage(
-            `Already compact — kept the original ${fmt(before)} (rasterising would've grown it to ${fmt(after)}).`,
-          );
-        }
-      } catch {
-        setStatus("error");
-        setMessage("Couldn't compress this PDF. Please try again.");
+        compressBaked.current = { buf: baked, sizes, before: baked.byteLength };
       }
+      const { buf, sizes, before } = compressBaked.current;
+      const { compressPdf } = await import("./pdf/finishOps");
+      const compressed = await compressPdf(buf, sizes, opts);
+      const after = compressed.byteLength;
+      // Rasterising a text/vector PDF can produce a *larger* file. Keep whichever
+      // is smaller so "compress" never hands back a bigger download.
+      const helped = after < before;
+      compressOut.current = { bytes: helped ? compressed : new Uint8Array(buf), helped, before, after };
+      return { before, after, helped };
     },
-    [pdf, bakeCurrent, fileName, downloadBytes],
+    [pdf, bakeCurrent],
   );
+
+  const downloadCompress = useCallback(() => {
+    const out = compressOut.current;
+    if (!out) return;
+    setCompressOpen(false);
+    const base = fileName.replace(/\.pdf$/i, "");
+    downloadBytes(out.bytes, base + (out.helped ? "-compressed.pdf" : ".pdf"));
+    setStatus("ready");
+    const fmt = (n: number) => (n < 1_000_000 ? Math.round(n / 1000) + " KB" : (n / 1_000_000).toFixed(2) + " MB");
+    setMessage(
+      out.helped
+        ? `Compressed — ${fmt(out.before)} → ${fmt(out.after)} (${Math.round((1 - out.after / out.before) * 100)}% smaller).`
+        : `Already compact — kept the original ${fmt(out.before)}.`,
+    );
+    compressBaked.current = null;
+    compressOut.current = null;
+  }, [fileName, downloadBytes]);
 
   const runOcr = useCallback(async () => {
     if (!pdf) return;
@@ -646,9 +655,9 @@ export function App() {
       { id: "numbers", group: "finish", label: "Page numbers", icon: "tag", keywords: "pagination folio", run: () => { setSelection(null); setFinishTab("numbers"); } },
       { id: "watermark", group: "finish", label: "Watermark", icon: "watermark", keywords: "draft stamp", run: () => { setSelection(null); setFinishTab("watermark"); } },
       { id: "eximg", group: "finish", label: "Export as images", icon: "image", keywords: "png zip export", run: exportImages },
-      { id: "compress", group: "finish", label: "Compress PDF", icon: "compress", keywords: "shrink reduce size optimise", run: () => { setSelection(null); setCompressOpen(true); } },
+      { id: "compress", group: "finish", label: "Compress PDF", icon: "compress", keywords: "shrink reduce size optimise", run: openCompress },
     ],
-    [runOcr, copyAllText, exportTextFile, exportImages],
+    [runOcr, copyAllText, exportTextFile, exportImages, openCompress],
   );
 
   const onChangeFragmentText = useCallback(
@@ -2041,7 +2050,7 @@ export function App() {
 
       {compressOpen && (
         <Suspense fallback={null}>
-          <CompressDialog onApply={applyCompress} onClose={() => setCompressOpen(false)} />
+          <CompressDialog onEstimate={estimateCompress} onDownload={downloadCompress} onClose={() => setCompressOpen(false)} />
         </Suspense>
       )}
 

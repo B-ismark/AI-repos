@@ -1412,6 +1412,21 @@ body {
 .compress__preset-label { font-weight: 600; }
 .compress__preset-hint { color: var(--on-surface-variant); }
 .compress__preset--on .compress__preset-hint { color: var(--on-secondary-container); }
+.compress__preset:disabled { opacity: 0.6; cursor: default; }
+/* Live size-preview line. */
+.compress__estimate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+}
+.compress__estimate strong { color: var(--on-surface); font-variant-numeric: tabular-nums; }
+.compress__estimate-err { color: var(--error); }
 
 /* ============ Confirm dialog ============ */
 .dialog--sm { width: min(400px, 100%); gap: 12px; }
